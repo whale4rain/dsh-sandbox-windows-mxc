@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "MXC Windows Sandbox",
+    "description": "Confines commands on Windows through Microsoft eXecution Container (MXC) ProcessContainer containment: workspace-write and read-only file policies, with denials reported as sandbox facts."
+  }
+}

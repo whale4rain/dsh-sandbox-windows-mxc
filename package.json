@@ -1,0 +1,49 @@
+{
+  "name": "dsh-sandbox-windows-mxc",
+  "version": "0.1.0",
+  "description": "Windows process sandbox for the DeepSeek Harness sandbox seam (ctx.sandbox), backed by Microsoft eXecution Container (MXC) ProcessContainer containment",
+  "license": "MIT",
+  "type": "module",
+  "icon": "./icon.svg",
+  "exports": {
+    ".": "./index.js",
+    "./runner": "./runner.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "runner.js",
+    "src/**/*.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md",
+    "README.zh.md"
+  ],
+  "engines": {
+    "node": ">=22.6"
+  },
+  "scripts": {
+    "test": "node tests/run.js",
+    "test:runner": "node tests/run.js runner"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.5-alpha.2",
+    "@deepseek-ai/dsh-sandbox": "0.2.1-alpha.3",
+    "yaml": "^2.9.1"
+  },
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "sandbox",
+    "windows",
+    "mxc"
+  ]
+}

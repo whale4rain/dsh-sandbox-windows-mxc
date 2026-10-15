@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "MXC Windows 沙箱",
+    "description": "在 Windows 上通过 Microsoft eXecution Container（MXC）的 ProcessContainer 隔离执行命令：支持 workspace-write 与 read-only 文件策略，并把拒绝结果作为沙箱事实上报。"
+  }
+}

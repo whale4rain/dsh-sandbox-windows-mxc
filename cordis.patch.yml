@@ -1,0 +1,38 @@
+# dsh-sandbox-windows-mxc: the MXC-backed Windows rung for the sandbox seam.
+#
+# The seam admits exactly one ctx.sandbox provider, so this layer disables the
+# shipped Windows ACL restricted-token row on Windows and mounts this plugin in
+# its place. On every other platform the shipped row is untouched and this
+# plugin's row stays disabled — MXC ProcessContainer confinement is Windows-only.
+- id: sandbox
+  disabled: !!js process.platform === 'win32'
+
+- insert:
+    - id: sandbox-mxc
+      name: 'dsh-sandbox-windows-mxc'
+      disabled: !!js process.platform !== 'win32'
+      # Every field is optional; these are the defaults, restated as an example.
+      # config:
+      #   # The executor to invoke. Omit it to resolve @microsoft/mxc-sdk's
+      #   # payload (bin/<arch>/wxc-exec.exe), or set DSH_MXC_EXEC in the
+      #   # environment.
+      #   execPath: 'C:\Program Files\mxc\wxc-exec.exe'
+      #   # Extra read-only grant roots for tools that live outside the
+      #   # workspace (MXC's AppContainer tiers have no ambient read access).
+      #   readOnlyRoots:
+      #     - 'C:\Program Files\nodejs'
+      #   # Network is outside the sandbox modes' vocabulary; 'deny' opts into
+      #   # MXC's egress/ingress denial instead.
+      #   network: allow
+      #   # 'child' forwards exactly the caller's environment; 'child+profile'
+      #   # layers it on the user's Windows profile environment instead.
+      #   environment: child
+      #   # Whether MXC may write host DACLs (the AppContainer tiers need it).
+      #   allowDaclMutation: true
+      #   # false keeps MXC's ACLs after the command (reuse cache, standing state).
+      #   clearPolicyOnExit: true
+      #   # Denial diagnosis: records denials while still denying them.
+      #   denialReport: 'C:\Temp\dsh-denials.json'
+      #   retainEtl: false
+      #   # Extra arguments for the executor, e.g. ['--debug'].
+      #   mxcArgs: []

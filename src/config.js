@@ -21,9 +21,11 @@ export const ENVIRONMENT_MODES = Object.freeze(['child', 'child+profile'])
 /** Every accepted configuration key (typos are rejected, not ignored). */
 export const CONFIG_KEYS = Object.freeze([
   'execPath',
+  'contractVersion',
   'containment',
   'readOnlyRoots',
   'deniedPaths',
+  'denialSignatures',
   'network',
   'environment',
   'allowDaclMutation',
@@ -49,6 +51,23 @@ function stringArrayField(name, value) {
   if (!Array.isArray(value)) fail(`${name} must be an array of strings`)
   for (const entry of value) stringField(`${name} entries`, entry)
   return [...value]
+}
+
+/** Require an MXC contract version spelling (e.g. `1.0.0`, `0.9.0-alpha`). */
+function contractVersionField(value) {
+  if (typeof value !== 'string' || !/^[0-9]+\.[0-9]+\.[0-9]+(-[0-9a-z.]+)?$/u.test(value)) {
+    fail('contractVersion must be an MXC contract version such as "1.0.0" or "0.9.0-alpha"; received ' + JSON.stringify(value))
+  }
+  return value
+}
+
+/** Require single-line stderr substrings. */
+function signatureArrayField(name, value) {
+  const entries = stringArrayField(name, value)
+  for (const entry of entries) {
+    if (/[\r\n]/u.test(entry)) fail(`${name} entries must be single-line strings`)
+  }
+  return entries
 }
 
 /** Require a boolean. */
@@ -92,9 +111,11 @@ export function normalizeConfig(raw) {
   }
   return Object.freeze({
     execPath: source.execPath === undefined ? undefined : stringField('execPath', source.execPath),
+    contractVersion: source.contractVersion === undefined ? '1.0.0' : contractVersionField(source.contractVersion),
     containment,
     readOnlyRoots: source.readOnlyRoots === undefined ? Object.freeze([]) : Object.freeze(stringArrayField('readOnlyRoots', source.readOnlyRoots)),
     deniedPaths: source.deniedPaths === undefined ? Object.freeze([]) : Object.freeze(stringArrayField('deniedPaths', source.deniedPaths)),
+    denialSignatures: source.denialSignatures === undefined ? Object.freeze([]) : Object.freeze(signatureArrayField('denialSignatures', source.denialSignatures)),
     network: source.network === undefined ? 'allow' : enumField('network', source.network, NETWORK_POSTURES),
     environment: source.environment === undefined ? 'child' : enumField('environment', source.environment, ENVIRONMENT_MODES),
     allowDaclMutation: source.allowDaclMutation === undefined ? true : booleanField('allowDaclMutation', source.allowDaclMutation),

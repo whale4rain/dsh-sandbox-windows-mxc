@@ -13,6 +13,13 @@
       disabled: !!js process.platform !== 'win32'
       # Every field is optional; these are the defaults, restated as an example.
       # config:
+      #   # The exact MXC contract every request carries. MXC version-checks this,
+      #   # and @microsoft/mxc-sdk's registry latest is not always 1.0.0: an
+      #   # SDK 0.8.x payload supports >=0.6, <=0.9 and refuses 1.0.0 outright.
+      #   contractVersion: '1.0.0'
+      #   # Extra stderr substrings that mean "denied" for this deployment. The
+      #   # dialect already includes the host's own localized wording.
+      #   denialSignatures: []
       #   # The executor to invoke. Omit it to resolve @microsoft/mxc-sdk's
       #   # payload (bin/<arch>/wxc-exec.exe), or set DSH_MXC_EXEC in the
       #   # environment.

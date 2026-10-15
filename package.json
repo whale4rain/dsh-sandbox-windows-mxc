@@ -27,7 +27,8 @@
   },
   "scripts": {
     "test": "node tests/run.js",
-    "test:runner": "node tests/run.js runner"
+    "test:runner": "node tests/run.js runner",
+    "acceptance": "node tests/live/acceptance.mjs"
   },
   "dsh": {
     "bundle": {

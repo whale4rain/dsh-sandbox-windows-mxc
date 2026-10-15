@@ -14,7 +14,15 @@ const WORKSPACE = process.cwd()
 /** Build a provider over its own context, with working test hooks. */
 function mounted(config = {}, internals = {}) {
   const instance = new MxcSandboxProvider(new Context(), config)
-  instance.internals = { platform: 'win32', execPath: EXEC, runnerEntry: RUNNER, ...internals }
+  instance.internals = {
+    platform: 'win32',
+    execPath: EXEC,
+    runnerEntry: RUNNER,
+    denialDialect: () => ['access is denied'],
+    // The contract probe is exercised by its own tests; here it must not spawn.
+    verifyContract: () => 'supported',
+    ...internals,
+  }
   return instance
 }
 
@@ -37,7 +45,7 @@ test('workspace-write wraps the exact argv in the runner dialect', async () => {
   assert.equal(facts.tempRoot, tmpdir())
   assert.equal(facts.workspaceRoot, WORKSPACE)
   assert.equal(confined.enforcement, 'partial')
-  assert.equal(confined.denialSignatures.length, 4)
+  assert.deepEqual(confined.denialSignatures, ['access is denied'])
   assert.deepEqual(confined.runnerFailureRules, [{ allowedExitCodes: [127], fatalSignatures: ['mxc-sandbox-run: '] }])
 })
 
@@ -71,6 +79,63 @@ test('operator configuration reaches the runner argv', async () => {
   assert.equal(facts.denialReport, join('C:', 'denials.json'))
   assert.equal(facts.retainEtl, true)
   assert.deepEqual(facts.mxcArgs, ['--debug'])
+})
+
+test('a refused request fails closed with MXC own message', async () => {
+  await assert.rejects(
+    mounted({}, { verifyContract: () => ({ detail: "Config schema version '1.0.0' is newer than supported (supported: >=0.6, <=0.9)" }) })
+      .confine(['cmd'], { mode: 'read-only', workspaceRoot: WORKSPACE }),
+    error => error instanceof SandboxUnavailableError
+      && error.code === SANDBOX_UNAVAILABLE
+      && error.message.includes("newer than supported (supported: >=0.6, <=0.9)")
+      && error.message.includes('set contractVersion'),
+  )
+})
+
+test('the verdict is reached once, and the probed request is the plugin own', async () => {
+  const probes = []
+  const instance = mounted({}, {
+    verifyContract: (request) => {
+      probes.push(request)
+      return 'supported'
+    },
+  })
+  await instance.confine(['cmd', '/c', 'dir'], { mode: 'workspace-write', workspaceRoot: WORKSPACE })
+  await instance.confine(['cmd'], { mode: 'workspace-write', workspaceRoot: WORKSPACE })
+  assert.equal(probes.length, 1, 'the executor is asked once per provider')
+  const probed = probes[0]
+  assert.equal(probed.version, '1.0.0')
+  assert.equal(probed.containment, 'processcontainer')
+  assert.equal(probed.process.commandLine, 'cmd /c dir')
+  assert.equal(probed.process.cwd, process.cwd())
+  // The probe validates shape only: the documented environment requirements do
+  // not apply to a request that is never launched.
+  assert.deepEqual(probed.process.env, [])
+  assert.deepEqual(probed.filesystem.readwritePaths, [WORKSPACE, tmpdir()])
+})
+
+test('an executor without a dry run yields no verdict, so commands still run', async () => {
+  const instance = mounted({}, { verifyContract: () => 'unprobed' })
+  const confined = await instance.confine(['cmd'], { mode: 'read-only', workspaceRoot: WORKSPACE })
+  assert.ok(confined.argv.includes('--exec'))
+  // No verdict is cached, so a later provider decision may still probe again.
+  assert.equal(instance.contractVerdict, undefined)
+})
+
+test('the denial dialect is resolved once per provider, from the host', async () => {
+  let calls = 0
+  const instance = mounted({ denialSignatures: ['extra-substring'] }, {
+    denialDialect: () => {
+      calls += 1
+      return ['access is denied', '拒绝访问']
+    },
+  })
+  const first = await instance.confine(['cmd'], { mode: 'read-only', workspaceRoot: WORKSPACE })
+  const second = await instance.confine(['cmd'], { mode: 'read-only', workspaceRoot: WORKSPACE })
+  assert.deepEqual(first.denialSignatures, ['access is denied', '拒绝访问'])
+  assert.deepEqual(second.denialSignatures, first.denialSignatures)
+  assert.equal(calls, 1, 'the message table is read once per provider')
+  assert.deepEqual(instance.resolveDenialSignatures(), first.denialSignatures)
 })
 
 test('the container id distinguishes sessions over one workspace', async () => {

@@ -32,6 +32,7 @@
 |---|---|
 | 宿主 | Windows 11 **24H2（build 26100）** 或更高——这是 MXC ProcessContainer 的下限。更新的版本会引入 MXC 的 base-container 档位，其隔离强度更低（见下文限制）。 |
 | MXC 执行器 | `wxc-exec.exe`，解析顺序为 `@microsoft/mxc-sdk` 包的载荷（`bin/<arch>/wxc-exec.exe`）、`DSH_MXC_EXEC`、本插件的 `execPath` 配置。 |
+| MXC 契约 | 执行器支持的契约范围必须包含 `contractVersion`（默认 `1.0.0`）。MXC 会对每份请求做版本校验，而 **`@microsoft/mxc-sdk` 在 registry 上的 `latest` 并不总是 1.0.0**：0.8.0 的执行器支持 `>=0.6, <=0.9`，会直接拒绝 `1.0.0` 请求。本插件一次只说一份精确契约，所以要么把 `contractVersion` 钉到执行器支持的版本，要么升级 SDK。 |
 | Node | 22.6 或更高（provider 与 runner 只用 ESM）。 |
 
 把 SDK 装进当前 profile（或用 `DSH_MXC_EXEC` 指向你以其他方式取得的执行器）：
@@ -78,12 +79,14 @@ npm install @microsoft/mxc-sdk
 | `containment` | 'processcontainer' | MXC 的 containment 选择。'process' 让 MXC 自行解析宿主原生进程后端；'processcontainer' 固定使用 Windows ProcessContainer 后端。 |
 | `readOnlyRoots` | [] | 受限命令可额外读取（绝不可写）的目录。MXC 的 AppContainer 档位没有环境自带读权限，因此工作区之外任何普通命令需要读取的内容——工具链、包缓存、凭据目录——都要写在这里。工作区本身始终可读。 |
 | `deniedPaths` | [] | MXC 直接拒绝的路径。执行方式取决于后端；被拒绝会通过沙箱事实上报。 |
+| `contractVersion` | '1.0.0' | 每份请求携带的精确 MXC 契约。把它设为执行器支持的版本（`@microsoft/mxc-sdk` 0.8.x 的载荷用 `0.9.0-alpha`）；MXC 会拒绝超出其支持范围的请求，本插件会在命令运行前先验证这一点。 |
 | `network` | 'allow' | 'allow' 让网络与无隔离时完全一致，因为沙箱 seam 的模式只管文件效果。'deny' 选用 MXC 的出向/入向拒绝，这是比 seam 承诺更强的姿态。 |
 | `environment` | 'child' | 'child' 让受限命令拿到 harness 组装的完整环境（已由 subprocess 服务完成清洗）。'child+profile' 会再把这份环境叠加到调用用户的 Windows 配置文件环境之上，profile 作用域变量（以及 MXC 要求的平台变量）由此可达。 |
 | `allowDaclMutation` | true | MXC 是否可以在兜底隔离步骤中写入宿主文件系统 DACL。设为 false 即拒绝该兜底，于是需要它的档位会失败，而不是改动宿主 ACL。 |
 | `clearPolicyOnExit` | true | true 表示撤销 MXC 为这一条命令应用的 ACL。false 表示保留它们（MXC 的复用缓存），会在宿主上留下长期状态。 |
 | `denialReport` | 未设置 | MXC 拒绝记录报告的输出路径。要求 `containment: processcontainer`。采集以 block 模式运行：既记录，也照旧拒绝。 |
 | `retainEtl` | false | 在报告旁保留 MXC 封存的 ETL 轨迹。要求 `denialReport`；保留的轨迹可能包含敏感路径。 |
+| `denialSignatures` | [] | 本部署额外认定的“被拒绝”stderr 子串（大小写不敏感）。通常不需要：方言已从宿主推导；仅在自研 runner 的措辞或本插件无法读取的语言环境下使用。 |
 | `mxcArgs` | [] | 传给执行器的额外参数，位于请求文件之前；例如传入 --debug 可打开 MXC 的诊断输出。 |
 
 未知字段会在插件挂载时被拒绝，拼写错误会直接报出自己，而不是悄悄取默认值。
@@ -106,6 +109,7 @@ seam 的两个受限模式都是文件效果策略，各自变成一份 MXC `1.0
 | `lifecycle` | { destroyOnExit: true, preservePolicy: !clearPolicyOnExit } | 同上 |
 | `fallback` | { allowDaclMutation } | 同上 |
 | `containerId` | dsh-&lt;sha256(工作区, 会话)[0..24]&gt; | 同上 |
+| `version` | `config.contractVersion`（默认 `1.0.0`） | 同上 |
 
 私有临时目录由 runner 在该次调用所属的临时根下创建，被授予读写，作为 TMP/TEMP 发布，并在结束后删除。若临时根就是工作区、或位于工作区之内，会在任何启动之前被拒绝：否则两份授权将无法区分。
 
@@ -120,11 +124,16 @@ seam 的两个受限模式都是文件效果策略，各自变成一份 MXC `1.0
 
 | 结果 | 表现方式 |
 |---|---|
-| 命令运行了，某个文件效果被拒绝 | 消费者侧的拒绝事实，来自本后端的拒绝方言（“Access is denied.”、“Access to the path … is denied.”、EACCES/EPERM 的措辞） |
+| 命令运行了，某个文件效果被拒绝 | 消费者侧的拒绝事实，与本后端的方言匹配：静态英文措辞，加上本插件从宿主读取的 `ERROR_ACCESS_DENIED` 措辞的两种读法 |
 | 命令运行了，自己失败了 | 普通的非零退出码 |
 | 沙箱根本没运行这条命令 | `SandboxUnavailableError`，错误码 `SANDBOX_UNAVAILABLE`，并带上 runner 的具体原因 |
 
-runner 侧失败会在 stderr 打印 `mxc-sandbox-run: <detail>` 并以 `127` 退出。包装命令的输出从不被改写，因此消费者同时用退出码与该签名来分类。所有 MXC 侧拒绝（不支持的 containment、无可用后端、策略被拒）都以 JSON 错误信封出现在 stderr 的最后一行，会被转换成同一套 runner 失败词汇，同时原封不动地留在 stderr 供运维查看。
+runner 侧失败会在 stderr 打印 `mxc-sandbox-run: <detail>` 并以 `127` 退出。包装命令的输出从不被改写，因此消费者同时用退出码与该签名来分类。
+
+MXC 侧的拒绝通过两条路径到达消费者，因为 MXC 有两种表达方式：
+
+- **在任何东西运行之前**：provider 每个生命周期验证一次“执行器是否接受本次调用会发出的请求”——把请求交给 `wxc-exec.exe --dry-run`（只解析与校验，随后退出）。被拒绝时在 `confine()` 抛出 `SANDBOX_UNAVAILABLE`，并带上 MXC 自己的原文——这正是装了一个契约与 `contractVersion` 不一致的 SDK 后会遇到的场景。不支持 dry run 的执行器不会给出结论，因此该探测绝不会把可用的后端误判为不可用。
+- **运行过程中**：MXC 以 JSON 错误信封写在 stderr 最后一行的拒绝，会被转换成同一套 `127` + 签名词汇，原始信封原样留在 stderr 供运维查看。
 
 | 看到的信息 | 处理 |
 |---|---|
@@ -134,6 +143,7 @@ runner 侧失败会在 stderr 打印 `mxc-sandbox-run: <detail>` 并以 `127` �
 | --workspace is not an existing directory | 会话的工作目录在命令运行前已被删除（或是失效的 junction） |
 | MXC refuses an explicit environment without … | 设置 `environment: child+profile`，让 MXC 补上平台必需变量 |
 | 受限命令读不到自己的工具链 | 把该目录加入 `readOnlyRoots` |
+| the installed MXC executor refuses this request: Config schema version … is newer than supported | SDK 的契约与 `contractVersion` 不一致；把 `contractVersion` 钉到受支持的版本，或升级 `wxc-exec` |
 
 -----
 
@@ -174,21 +184,34 @@ npm test
 | tests/runner.test.js | 用 stub 执行器端到端验证 runner：请求内容、环境、私有临时目录生命周期、输出转发、退出码镜像、信封分类、临时根防护、控制标记拒绝、`--print-config` |
 | tests/manifest.test.js | bundle patch、exports 与 files 列表、两个语言的展示元数据、图标 |
 
-### 尚未验证的部分
+### 真机验收
 
-开发本插件的机器上没有 MXC 载荷，因此**启动路径尚未对真实的 `wxc-exec.exe` 跑过**，也没有观察到任何实时的隔离断言。已验证的是本插件自身的契约：请求文档逐字段匹配 MXC 发布的 `1.0.0` schema；引号规则能通过独立编写的命令行解析器；失败词汇与文档化的执行器行为（退出码镜像、stderr 错误信封）一致。依赖它之前，请在 Windows 11 24H2+ 宿主机上做两项现场检查：
-
-```powershell
-# 1. 这台宿主实际会给出哪个 containment 档位？
-& "<sdk>\bin\x64\wxc-exec.exe" --probe
-
-# 2. 查看一条真实命令会运行在怎样的请求下。
-node runner.js --workspace $PWD --mode read-only --exec "<sdk>\bin\x64\wxc-exec.exe" --print-config -- cmd /c "echo hello"
+```bash
+npm run acceptance              # 需要一个执行器；用 DSH_MXC_EXEC 指定
+DSH_MXC_CONTRACT=0.9.0-alpha npm run acceptance   # 钉住较旧 SDK 的契约
 ```
 
-然后去掉 `--print-config`，确认 harness 渲染的两项事实：工作区之外的写入报为拒绝（而不是任务失败），不可用的执行器报为 `SANDBOX_UNAVAILABLE`。
+`tests/live/acceptance.mjs` 把 provider 挂在真实 seam 上，受限一个 argv，然后原样启动 `confine()` 返回的内容，并断言五项事实。**在 Windows 11 25H2（build 26200.9457）上、使用 `@microsoft/mxc-sdk` 0.8.0 载荷并钉到其 `0.9.0-alpha` 契约，实测结果：**
 
-runner 套件会启动子进程；在禁止 fork 的宿主（或沙箱）里，它们会以 spawn 错误失败，而不是插件缺陷。
+| 用例 | 观察结果 |
+|---|---|
+| read-only 执行 `cmd /c echo …` | 正常运行，退出码 0，输出逐字节转发；上报 `enforcement: 'partial'` |
+| workspace-write，写工作区内 | 允许，退出码 0，文件内容符合预期 |
+| workspace-write，写工作区之外 | 被拒绝，退出码 1，**没有创建文件** |
+| 同样的写入，无隔离执行（对照） | 成功——因此上面的拒绝来自沙箱策略，而不是宿主的权限 |
+| 消费者看到的“被拒绝” | 由方言中从宿主推导的读法匹配成功（harness 会把子进程 OEM 编码的 stderr 按 UTF-8 解码，这正是那种字节级读法存在的原因） |
+| 对该执行器使用 `contractVersion: 1.0.0` | 在任何东西运行之前抛出 `SANDBOX_UNAVAILABLE`，携带 MXC 原文 “Config schema version '1.0.0' is newer than supported (supported: >=0.6, <=0.9)” |
+
+该宿主上 `wxc-exec.exe --probe` 报告 `tier: "base-container"`、`baseContainerApiPresent: true`、`needsDaclAugmentation: false`、`isolationSessionAvailable: false`——即 MXC 最新的档位，不需要改动宿主 DACL。
+
+### 尚未验证的部分
+
+- **`1.0.0` 契约尚未端到端跑过**：验收机上没有随包发布 `1.0.0` 执行器的 SDK 版本，因此对其发布 schema 的逐字段匹配仍以 schema 与文档为依据。以上全部实测跑在 `0.9.0-alpha` 下。
+- **harness 自身的工具层未被驱动**：验收脚本按 `dsh-bash-sandbox`/`dsh-pwsh-sandbox` 的方式直接调用 provider，但没有启动挂载了这些行的 profile。因此升级确认提示、拒绝渲染、以及 `plugin_manager install_bundle` 在本机均未测试。
+- **其他后端与诊断**：`wslc`、`windows_sandbox`、`isolation_session`（本机存在该服务，但 probe 报告其不可用）、`--audit` 模式、拒绝记录产物，都不在本插件已测路径内。
+- **本地化拒绝措辞只验证了一种语言**（zh-CN，本机即为此）。其他语言依赖同一套推导，按构造与语言无关，但只观察过 zh-CN。
+
+runner 套件会启动子进程；在禁止 fork 的宿主（或沙箱）里，它们会以 spawn 错误失败，而不是插件缺陷。真机验收需要真实执行器，且不属于 `npm test`。
 
 -----
 
@@ -196,13 +219,13 @@ runner 套件会启动子进程；在禁止 fork 的宿主（或沙箱）里，�
 ## 已知限制与待办
 
 - **enforcement 始终上报 partial。** NTFS 硬链接会让同一个文件对象在多个路径上出现，因此被授权的工作区文件仍有一个授权根之外的地址；DACL 上写有其他沙箱 AppContainer 包 SID 的目录树无法被受限子进程打开；所选档位取决于宿主（较新版本上 MXC 的 base-container 档位保留了调用方环境中的读权限，而不是限制它）；以 allow 模式采集拒绝则意味着记录的同时放行。需要绝对边界的消费者必须拒绝此后端，而不是把它当作 full。
-- **读权限是显式授予的。** MXC 的 AppContainer 档位起始时没有任何环境自带读权限，因此工作区以及每个 `readOnlyRoots` 条目都会被授予读取。这比读不设限的后端面积更大，也正是 `readOnlyRoots` 应该写目录而不是整个盘符的原因。
+- **读权限是显式授予的，因为某些档位确实需要。** MXC 的 AppContainer 档位起始时没有任何环境自带读权限，因此工作区以及每个 `readOnlyRoots` 条目都会被授予读取；而在 base-container 档位下读权限本来就是环境自带的，该授权是冗余但无害的。也正因如此，`readOnlyRoots` 应该写目录而不是整个盘符。
 - **工作区需要宿主侧 ACL 应用**（AppContainer 档位下），MXC 会逐条命令应用并在之后撤销（`clearPolicyOnExit: true`）；`allowDaclMutation: false` 会拒绝这条兜底路径，代价是需要它的档位不可用。
 - **没有交互式终端。** MXC 的 one-shot 执行器拥有进程的 stdio；本插件转发调用方的 stdio，但不实现 PTY。harness 基于 PTY 的终端工具不经过 `ctx.sandbox`，不受影响。
 - **MXC 请求会带上子进程的完整环境**——TMP/TEMP 就是这样指向被授权的私有目录的——因此其中包含 profile 提供的全部凭据。runner 会把它写入系统临时根，仅存活于一条命令的时间，随后删除；`--print-config` 会打印同样的内容（并在 stderr 给出提示）。两者都应按敏感数据处理；与其他本地用户共享的临时根，等同于与他们共享这些内容。
 - **subprocess 控制通道被拒绝**，而不是转发（见上文）。如果某个 profile 依赖受隔离的 PTC 执行，请继续使用 `@deepseek-ai/dsh-sandbox-local`。
-- **不在运行期检测版本偏差。** 本插件说的是精确的 `1.0.0` 契约。MXC 会拒绝未知或不支持的请求，而不是部分应用；runner 会把这种拒绝转成 `SANDBOX_UNAVAILABLE`，因此未来契约的变化会表现为故障关闭的沙箱，而不是静默的隔离不足。
-- **待办：** `1.1.0-alpha` 契约（逐命令 leastPrivilege、enumeratePaths）、把 MXC 的 probe 输出通过工具或 inspect provider 暴露出来、以及一套真机验收套件。
+- **一次只说一份精确契约。** MXC 对每份请求做版本校验，超出执行器支持范围的会被拒绝；本插件只发送 `contractVersion` 指定的那一份。命令前的 `--dry-run` 校验会把这种拒绝转成 `SANDBOX_UNAVAILABLE`（在运行之前），因此版本不一致表现为故障关闭的沙箱，而不是静默的隔离不足——但这也意味着，遇到本插件尚未支持的契约需要设置 `contractVersion`（或更新插件），而不是期待回退。
+- **待办：** `1.1.0-alpha` 契约（逐命令 leastPrivilege、enumeratePaths）、把 MXC 的 probe 输出通过工具或 inspect provider 暴露出来、`wslc`/`isolation_session` 边界（它们属于整能力替换，而不是沙箱档位），以及经由 harness 自身 bash/pwsh 工具层的 profile 级验收。
 
 -----
 
@@ -213,7 +236,7 @@ runner 套件会启动子进程；在禁止 fork 的宿主（或沙箱）里，�
 <summary>维护者上下文——点击展开</summary>
 
 - **为什么不直接复用官方 ACL 档位？** harness 已经自带 `@deepseek-ai/dsh-sandbox-windows-acl`；本插件存在是因为 MXC 是另一种取舍——由微软维护、策略驱动，代价是原生载荷、24H2+ 的系统下限，以及必须显式授予的读权限。两者是同一个 seam 的替代方案，从不互补。
-- **真相所在：** `src/policy.js` 是模式变成请求的唯一位置，`tests/policy.test.js` 是它被钉住的地方。runner 除了重新校验拿到的内容之外，不添加任何自己的策略。
+- **真相所在：** `src/policy.js` 是模式变成请求的唯一位置，`src/denial.js` 是拒绝方言的唯一推导位置，`src/contract.js` 是判断执行器是否接受的唯一位置；分别由 `tests/policy.test.js`、`tests/denial.test.js`、`tests/contract.test.js` 钉住。runner 除了重新校验拿到的内容之外，不添加任何自己的策略。
 - **新增一个配置字段**意味着四处修改：`src/config.js` 的键列表与校验、`src/policy.js` 的映射、`src/argv.js` 的旗标（构造与解析两侧），以及上面的表格。`tests/argv.test.js` 证明两侧一致。
 - **不要把 harness 包 import 进 runner。** 它运行在 profile 的 Node 与 profile 的环境下；它的 import 只有 Node 内置模块和自己的 `src/` 模块。
 

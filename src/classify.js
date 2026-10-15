@@ -36,20 +36,13 @@ export const SUBPROCESS_CONTROL_MARKER = 'DSH_SUBPROCESS_CONTROL'
 export const ENFORCEMENT = 'partial'
 
 /**
- * The denial dialect MXC's contained children speak — the case-insensitive
- * stderr substrings a denied file effect produces. Windows denies through
- * `ERROR_ACCESS_DENIED`, which each runtime spells for itself: `cmd` prints
- * "Access is denied.", PowerShell and .NET print "Access to the path '…' is
- * denied.", and Node reports EACCES/EPERM as "permission denied" and
- * "operation not permitted". The set matches the shipped windows-acl rung, so a
- * consumer sees one Windows dialect either way.
+ * The STATIC part of the denial dialect this backend speaks. The complete
+ * dialect is per-provider and wider than this list: {@link ./denial.js} adds the
+ * host's own localized wording for `ERROR_ACCESS_DENIED` (a zh-CN host denies
+ * with its Chinese message) plus any operator-supplied extra. Consumers match
+ * against the dialect the provider returned, never against this constant.
  */
-export const DENIAL_SIGNATURES = Object.freeze([
-  'access is denied',
-  'access to the path',
-  'permission denied',
-  'operation not permitted',
-])
+export { STATIC_SIGNATURES as DENIAL_SIGNATURES } from './denial.js'
 
 /**
  * Structured runner-failure evidence: the runner's own signature, gated on its

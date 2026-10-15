@@ -45,6 +45,8 @@ function runRunner(options = {}) {
     '--mode', options.mode ?? 'workspace-write',
     '--exec', process.execPath,
     ...options.mode === 'read-only' ? [] : ['--temp', options.tempRoot ?? tempRoot],
+    // Pinned so this suite also exercises the flag the provider always sends.
+    ...options.contractVersion === undefined ? [] : ['--contract-version', options.contractVersion],
     '--mxc-arg', STUB,
     ...options.extraArgs ?? [],
     '--', ...(options.argv ?? ['cmd', '/c', 'exit', '0']),

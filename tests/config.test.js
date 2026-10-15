@@ -11,9 +11,11 @@ test('defaults are the shipped selection policy', () => {
   const config = normalizeConfig(undefined)
   assert.deepEqual({ ...config }, {
     execPath: undefined,
+    contractVersion: '1.0.0',
     containment: 'processcontainer',
     readOnlyRoots: [],
     deniedPaths: [],
+    denialSignatures: [],
     network: 'allow',
     environment: 'child',
     allowDaclMutation: true,
@@ -48,6 +50,20 @@ test('a full row is accepted and frozen', () => {
   assert.equal(config.clearPolicyOnExit, false)
   assert.deepEqual(config.mxcArgs, ['--debug'])
   assert.ok(Object.isFrozen(config.readOnlyRoots))
+})
+
+test('extra denial signatures are single-line strings', () => {
+  assert.deepEqual(normalizeConfig({ denialSignatures: ['拒绝访问'] }).denialSignatures, ['拒绝访问'])
+  refuses({ denialSignatures: ['ok', 'two' + String.fromCharCode(10) + 'lines'] }, /denialSignatures entries must be single-line strings/)
+  refuses({ denialSignatures: [''] }, /denialSignatures entries must be a non-empty string/)
+})
+
+test('the contract version is validated, and an older SDK can be pinned', () => {
+  assert.equal(normalizeConfig({}).contractVersion, '1.0.0')
+  assert.equal(normalizeConfig({ contractVersion: '0.9.0-alpha' }).contractVersion, '0.9.0-alpha')
+  refuses({ contractVersion: '1' }, /contractVersion must be an MXC contract version/)
+  refuses({ contractVersion: 'v1.0.0' }, /contractVersion must be an MXC contract version/)
+  refuses({ contractVersion: 1 }, /contractVersion must be an MXC contract version/)
 })
 
 test('unknown fields are refused rather than ignored', () => {

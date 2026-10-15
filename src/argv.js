@@ -18,6 +18,7 @@ const VALUE_FLAGS = new Map([
   ['--workspace', 'workspaceRoot'],
   ['--mode', 'mode'],
   ['--exec', 'execPath'],
+  ['--contract-version', 'contractVersion'],
   ['--temp', 'tempRoot'],
   ['--containment', 'containment'],
   ['--network', 'network'],
@@ -47,7 +48,8 @@ export const ARGV_SEPARATOR = '--'
 /** The accepted usage, as the runner's failure message spells it. */
 export const RUNNER_USAGE = [
   'usage: <node> runner.js --workspace <dir> --mode <read-only|workspace-write> --exec <wxc-exec path>',
-  '       [--temp <dir>] [--containment <processcontainer|process>] [--network <allow|deny>]',
+  '       [--temp <dir>] [--containment <processcontainer|process>] [--contract-version <ver>]',
+  '       [--network <allow|deny>]',
   '       [--environment <child|child+profile>] [--read-only-root <dir>...] [--denied-path <dir>...]',
   '       [--container-id <id>] [--dacl-mutation <allow|deny>] [--denial-report <path>] [--retain-etl]',
   '       [--mxc-arg <arg>...] [--print-config] -- <command> [args...]',
@@ -62,6 +64,8 @@ export const RUNNER_USAGE = [
  * @param options.mode - the confined mode.
  * @param options.workspaceRoot - the canonical workspace boundary.
  * @param options.execPath - the MXC executor to invoke.
+ * @param options.contractVersion - the exact MXC contract to request, when the
+ *   operator pinned one; the request builder defaults it.
  * @param options.tempRoot - the temp root for `workspace-write`, omitted under `read-only`.
  * @param options.containment - MXC containment selection.
  * @param options.network - network posture.
@@ -89,6 +93,7 @@ export function buildRunnerArgv(options) {
   argv.push('--environment', options.environment)
   argv.push('--container-id', options.containerId)
   argv.push('--dacl-mutation', options.allowDaclMutation === true ? 'allow' : 'deny')
+  if (options.contractVersion !== undefined) argv.push('--contract-version', options.contractVersion)
   for (const root of options.readOnlyRoots ?? []) argv.push('--read-only-root', root)
   for (const path of options.deniedPaths ?? []) argv.push('--denied-path', path)
   if (options.denialReport !== undefined) argv.push('--denial-report', options.denialReport)
@@ -117,6 +122,7 @@ export function parseRunnerArgv(raw) {
     workspaceRoot: undefined,
     mode: undefined,
     execPath: undefined,
+    contractVersion: undefined,
     tempRoot: undefined,
     containment: 'processcontainer',
     network: 'allow',
@@ -178,6 +184,7 @@ export function parseRunnerArgv(raw) {
 export function configFromFacts(facts) {
   return {
     containment: facts.containment,
+    ...facts.contractVersion === undefined ? {} : { contractVersion: facts.contractVersion },
     readOnlyRoots: facts.readOnlyRoots,
     deniedPaths: facts.deniedPaths,
     network: facts.network,

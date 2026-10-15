@@ -13,7 +13,12 @@
 import { createHash } from 'node:crypto'
 import { SUBPROCESS_CONTROL_MARKER } from './classify.js'
 
-/** The exact MXC contract this plugin speaks. */
+/**
+ * The MXC contract version this plugin speaks by default. MXC validates the
+ * version exactly and refuses a request outside what the executor supports, so
+ * an operator running an older SDK pins `config.contractVersion` to that
+ * build's contract instead of downgrading the whole plugin.
+ */
 export const MXC_CONTRACT_VERSION = '1.0.0'
 
 /** The environment names the temp rewrite replaces (see {@link childEnvironment}). */
@@ -127,14 +132,15 @@ export function buildMxcRequest(options) {
     ? uniquePaths(config.readOnlyRoots)
     : uniquePaths([workspaceRoot, ...config.readOnlyRoots])
   const request = {
-    version: MXC_CONTRACT_VERSION,
+    // The default lives here so the runner — which is also usable on its own —
+    // still speaks the plugin's contract when no flag pinned another one.
+    version: config.contractVersion ?? MXC_CONTRACT_VERSION,
     containment: config.containment,
     containerId,
     process: {
       commandLine,
       cwd,
       env: environmentEntries(env),
-      inheritDefaultEnv: config.environment === 'child+profile',
     },
     filesystem: {
       readwritePaths: mode === 'workspace-write' ? uniquePaths([workspaceRoot, privateTempDir]) : [],
@@ -149,6 +155,13 @@ export function buildMxcRequest(options) {
       preservePolicy: !config.clearPolicyOnExit,
     },
     fallback: { allowDaclMutation: config.allowDaclMutation },
+  }
+  if (config.environment === 'child+profile') {
+    // Sent ONLY when it changes the meaning: omitting the field means "use the
+    // array verbatim" in the exact contract, so spelling out `false` would add
+    // nothing and would make the request unreadable to an executor built
+    // against a contract that predates the field.
+    request.process.inheritDefaultEnv = true
   }
   if (config.containment === 'processcontainer' && config.denialReport !== undefined) {
     // `block` records while it denies; `allow` would record and permit, which is

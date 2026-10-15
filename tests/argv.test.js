@@ -12,6 +12,7 @@ function options(overrides = {}) {
     mode: 'workspace-write',
     workspaceRoot: join('C:', 'ws'),
     execPath: join('C:', 'mxc', 'wxc-exec.exe'),
+    contractVersion: '1.0.0',
     tempRoot: join('C:', 'Users', 'u', 'AppData', 'Local', 'Temp'),
     containment: 'processcontainer',
     network: 'allow',
@@ -45,6 +46,7 @@ test('build and parse agree over a fully-specified argv', () => {
     workspaceRoot: join('C:', 'ws'),
     mode: 'workspace-write',
     execPath: join('C:', 'mxc', 'wxc-exec.exe'),
+    contractVersion: '1.0.0',
     tempRoot: join('C:', 'Users', 'u', 'AppData', 'Local', 'Temp'),
     containment: 'processcontainer',
     network: 'deny',
@@ -70,6 +72,12 @@ test('read-only names no temp root', () => {
   assert.equal(facts.mode, 'read-only')
 })
 
+test('an unpinned contract version is simply absent from the argv', () => {
+  const argv = buildRunnerArgv(options({ contractVersion: undefined }))
+  assert.ok(!argv.includes('--contract-version'))
+  assert.equal(parseRunnerArgv(argv.slice(2)).contractVersion, undefined)
+})
+
 test('defaults apply when only the required facts are given', () => {
   const facts = parseRunnerArgv(['--workspace', 'ws', '--mode', 'read-only', '--exec', 'exec.exe', '--', 'cmd'])
   assert.equal(facts.containment, 'processcontainer')
@@ -80,6 +88,7 @@ test('defaults apply when only the required facts are given', () => {
   assert.equal(facts.retainEtl, false)
   assert.equal(facts.printConfig, false)
   assert.equal(facts.containerId, undefined)
+  assert.equal(facts.contractVersion, undefined)
   assert.deepEqual(facts.readOnlyRoots, [])
   assert.deepEqual(facts.deniedPaths, [])
   assert.deepEqual(facts.mxcArgs, [])

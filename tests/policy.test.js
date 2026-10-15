@@ -28,6 +28,10 @@ test('the request carries the exact contract version and the derived identity', 
   const built = request()
   assert.equal(built.version, MXC_CONTRACT_VERSION)
   assert.equal(built.version, '1.0.0')
+  // An operator running an older SDK pins its contract instead of downgrading.
+  assert.equal(request({ config: { contractVersion: '0.9.0-alpha' } }).version, '0.9.0-alpha')
+  // The runner, invoked on its own, still defaults to the plugin's contract.
+  assert.equal(request({ config: {} }).version, '1.0.0')
   assert.equal(built.containment, 'processcontainer')
   assert.equal(built.containerId, 'dsh-test')
 })
@@ -39,7 +43,9 @@ test('workspace-write grants the workspace and the private temp directory', () =
   assert.deepEqual(built.filesystem.deniedPaths, [])
   assert.equal(built.process.cwd, CWD)
   assert.equal(built.process.commandLine, 'cmd /c "echo hi"')
-  assert.equal(built.process.inheritDefaultEnv, false)
+  // The field is omitted rather than spelled out as false: omission is the same
+  // meaning in the exact contract, and an older executor rejects the spelling.
+  assert.equal('inheritDefaultEnv' in built.process, false)
   assert.deepEqual(built.process.env, ['LOCALAPPDATA=' + ENV.LOCALAPPDATA, 'SystemRoot=' + ENV.SystemRoot])
   // No execution timeout: the harness's shell executor owns command deadlines.
   assert.equal('timeout' in built.process, false)
@@ -81,7 +87,7 @@ test('lifecycle and fallback state the per-call model', () => {
 
 test('the environment mode selects whether MXC layers the profile default', () => {
   assert.equal(request({ config: { environment: 'child+profile' } }).process.inheritDefaultEnv, true)
-  assert.equal(request().process.inheritDefaultEnv, false)
+  assert.equal('inheritDefaultEnv' in request().process, false)
 })
 
 test('denial diagnosis adds only the ProcessContainer section MXC accepts', () => {

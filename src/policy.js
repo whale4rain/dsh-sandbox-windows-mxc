@@ -148,6 +148,15 @@ export function buildMxcRequest(options) {
       deniedPaths: uniquePaths(config.deniedPaths),
     },
     network: networkPolicy(config.network),
+    // Stated explicitly in both directions: MXC's own default is `disable: true`,
+    // so "leave the desktop as it is" must be written out to mean anything.
+    // The sandbox seam's modes govern file effects only, so `allow` is the
+    // default — and it is also what makes PowerShell and Node start at all.
+    ui: {
+      disable: config.ui === 'deny',
+      clipboard: config.clipboard,
+      injection: config.allowInputInjection,
+    },
     lifecycle: {
       destroyOnExit: true,
       // The per-call model: ACEs MXC wrote for this request are revoked when it

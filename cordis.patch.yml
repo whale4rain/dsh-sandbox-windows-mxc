@@ -17,6 +17,10 @@
       #   # and @microsoft/mxc-sdk's registry latest is not always 1.0.0: an
       #   # SDK 0.8.x payload supports >=0.6, <=0.9 and refuses 1.0.0 outright.
       #   contractVersion: '1.0.0'
+      #   # Whether the desktop stays reachable. 'deny' is MXC's own default and it
+      #   # breaks PowerShell (the harness's Windows shell tool) and Node with
+      #   # STATUS_DLL_INIT_FAILED, so 'allow' is the shipped default.
+      #   ui: allow
       #   # Extra stderr substrings that mean "denied" for this deployment. The
       #   # dialect already includes the host's own localized wording.
       #   denialSignatures: []

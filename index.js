@@ -132,14 +132,24 @@ export class MxcSandboxProvider extends SandboxProvider {
 
   /**
    * Wrap `argv` so it runs inside MXC's containment under `policy`.
+   *
+   * Synchronous on purpose. The seam's contract version decides how consumers
+   * call this: dsh 0.1.x declares `confine(argv, policy): ConfinedArgv` and
+   * reads `confined.argv` on the spot, while later revisions declare a
+   * `Promise` and `await` it. Returning the value directly satisfies both —
+   * `await` on a non-promise yields the value — whereas returning a promise
+   * breaks the synchronous consumers outright. Everything this method does
+   * (canonicalizing the root, locating the executor, the once-per-provider
+   * contract probe, reading the denial dialect) is already synchronous, so
+   * nothing is lost.
    * @param argv - the exact argv the caller is about to spawn.
    * @param policy - the file-effect policy this execution runs under.
-   * @param signal - cancellation before the runner argv is produced.
+   * @param signal - optional cancellation, checked before the wrapped argv is produced.
    * @returns the runner argv plus this backend's enforcement completeness,
    *   denial dialect, and runner-failure rules.
    * @throws SandboxUnavailableError when this host has no usable MXC executor.
    */
-  async confine(argv, policy, signal) {
+  confine(argv, policy, signal) {
     signal?.throwIfAborted()
     const mode = policy?.mode
     if (mode !== 'read-only' && mode !== 'workspace-write') {
@@ -179,6 +189,9 @@ export class MxcSandboxProvider extends SandboxProvider {
         contractVersion: this.config.contractVersion,
         network: this.config.network,
         environment: this.config.environment,
+        ui: this.config.ui,
+        clipboard: this.config.clipboard,
+        allowInputInjection: this.config.allowInputInjection,
         readOnlyRoots: unique(this.config.readOnlyRoots.map(canonicalPath)),
         deniedPaths: unique(this.config.deniedPaths.map(canonicalPath)),
         containerId: containerIdFor(workspaceRoot, policy.sessionId),

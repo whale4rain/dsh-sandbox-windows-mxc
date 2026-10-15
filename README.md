@@ -82,6 +82,9 @@ No configuration is required beyond the executor being resolvable.
 | `deniedPaths` | [] | Paths MXC denies outright. Enforcement is backend-dependent; a denial is reported through the sandbox facts. |
 | `contractVersion` | '1.0.0' | The exact MXC contract every request carries. Set it to a version your executor supports (`0.9.0-alpha` for an `@microsoft/mxc-sdk` 0.8.x payload); MXC refuses a request outside its supported range, and this plugin verifies acceptance up front (see below). |
 | `network` | 'allow' | 'allow' keeps the network exactly as an unconfined command would have it, because the sandbox seam's modes govern file effects only. 'deny' opts into MXC's egress/ingress denial, a stronger posture than the seam promises. |
+| `ui` | 'allow' | Whether the desktop stays reachable. **`deny` is MXC's own default and it breaks the harness's Windows shell tool**: Windows programs need Win32k to initialize, so PowerShell (and Node) die with `STATUS_DLL_INIT_FAILED` (0xC0000142) before running anything — observed directly. `allow` keeps the desktop as unconfined, matching the shipped Windows rung; `deny` opts into MXC's UI denial and then only programs that never touch the UI subsystem can run. |
+| `clipboard` | 'none' | Clipboard access for a contained command, when `ui: allow`: `none`, `read`, `write`, or `all`. |
+| `allowInputInjection` | false | Whether synthetic keyboard and mouse input is permitted, when `ui: allow`. |
 | `environment` | 'child' | 'child' gives the contained command exactly the environment the harness assembled (already scrubbed by the subprocess service). 'child+profile' additionally layers that block over the calling user's Windows profile environment, which is how profile-scoped variables (and the platform variables MXC requires) are reached. |
 | `allowDaclMutation` | true | Whether MXC may write host filesystem DACLs as its fallback containment step. false refuses the fallback, so a tier that needs it fails instead of mutating host ACLs. |
 | `clearPolicyOnExit` | true | true revokes the ACLs MXC applied for that one command. false keeps them (MXC's reuse cache), leaving standing host state behind. |
@@ -107,6 +110,7 @@ The seam's two confined modes are file-effect policies, and each becomes one MXC
 | `process.env` | the harness's environment, with its launch marker withheld | the same, with TMP/TEMP pointed at the private temp directory |
 | `process.cwd` | the caller's working directory, always explicit | the same |
 | `network` | config.network (an explicit posture; omission would mean deny) | the same |
+| `ui` | { disable, clipboard, injection } — stated explicitly, because MXC's own default is `disable: true` | the same |
 | `lifecycle` | { destroyOnExit: true, preservePolicy: !clearPolicyOnExit } | the same |
 | `fallback` | { allowDaclMutation } | the same |
 | `containerId` | dsh-&lt;sha256(workspace, session)[0..24]&gt; | the same |
@@ -183,6 +187,7 @@ npm test
 | tests/locate.test.js | executor resolution order (execPath → DSH_MXC_EXEC → SDK payload → architecture fallback) and the runner-entry fallback |
 | tests/provider.test.js | the provider mounted on the real @deepseek-ai/dsh-sandbox seam: wrapped argv, per-config argv, session-scoped container ids, every fail-closed path |
 | tests/runner.test.js | the runner end to end against a stub executor: request contents, environment, private-temp lifecycle, output relay, exit mirroring, envelope classification, the temp-root guard, the control-marker refusal, `--print-config` |
+| tests/live/harness.mjs | a booted real dsh profile: `ctx.sandbox` is this provider, `ctx.shell` runs a confined command through it, a workspace write is permitted, an outside write is denied and classified as a denial by the harness |
 | tests/denial.test.js | the host-derived denial dialect: both readings of a real zh-CN host's bytes, the ASCII-host dedupe, and every fail-soft path |
 | tests/contract.test.js | the up-front contract verification: acceptance, a refusal carrying MXC's own last line, an executor without a dry run yielding no verdict, and scratch-file cleanup |
 | tests/manifest.test.js | the bundle patch, the exports and files lists, the display metadata in both locales, and the icon |
@@ -190,8 +195,8 @@ npm test
 ### Live acceptance
 
 ```bash
-npm run acceptance              # needs an executor; DSH_MXC_EXEC to point at one
-DSH_MXC_CONTRACT=0.9.0-alpha npm run acceptance   # pin the contract of an older SDK
+npm run acceptance              # the provider against a real executor; DSH_MXC_EXEC pins one
+npm run acceptance:harness      # boot a real dsh profile and drive its own shell tool
 ```
 
 `tests/live/acceptance.mjs` mounts the provider on the real seam, confines an argv, spawns exactly what `confine()` returned, and asserts five facts. **Observed on a Windows 11 25H2 host (build 26200.9457) with the `@microsoft/mxc-sdk` 0.8.0 payload, pinned to its `0.9.0-alpha` contract:**
@@ -207,10 +212,31 @@ DSH_MXC_CONTRACT=0.9.0-alpha npm run acceptance   # pin the contract of an older
 
 `wxc-exec.exe --probe` on that host reports `tier: "base-container"`, `baseContainerApiPresent: true`, `needsDaclAugmentation: false`, `isolationSessionAvailable: false` — MXC's newest tier, which needs no host DACL mutation.
 
+### Installed in a real dsh, through the harness's own shell tool
+
+```bash
+npm run acceptance:harness          # DSH_HARNESS_PROFILE selects the profile (default web)
+```
+
+`tests/live/harness.mjs` loads a real profile the way the CLI does (every bundle layer, then the profile's own patch file), boots the tree, and asserts on the live services rather than on this plugin's own output. **Observed on the web profile of the dsh 0.1.5-rc.2 installation at `D:\task\deepseek-harness`, with the plugin installed as a live link:**
+
+| Case | Observation |
+|---|---|
+| `ctx.sandbox` | **`MxcSandboxProvider`** — this plugin is the mounted provider, and the shipped ACL row is disabled by the bundle patch |
+| `ctx.shell` (the real `dsh-pwsh-sandbox`) | runs a foreground command confined, exit 0, output relayed: `echo harness-mxc-ok` |
+| the result's sandbox facts | `{ mode: 'workspace-write', denied: false, enforcement: 'partial' }` |
+| `Set-Content` inside the workspace | permitted, file created with the expected content |
+| `Set-Content` outside the workspace | denied (exit 1, no file), stderr `Access to the path '…' is denied.` |
+| the harness's own classification | `denied: true`, and **not** reported as a runner failure |
+| the same write, unconfined (control) | succeeded — the denial is policy, not host permission |
+
+**The one finding that changes the defaults:** with MXC's own `ui.disable: true`, PowerShell — the harness's Windows shell tool — dies with `STATUS_DLL_INIT_FAILED` (0xC0000142) before executing anything, because it needs Win32k to initialize; Node does the same. Confirmed both ways: the same `pwsh` command under MXC exits `-1073741502` without UI access and `0` with it. The plugin therefore defaults to `ui: allow` (the desktop left as unconfined, like the shipped Windows rung) instead of MXC's `deny`. An operator who wants the harder posture sets `ui: deny` and accepts that only non-UI programs can run.
+
 ### What is not verified yet
 
 - **The `1.0.0` contract has not been exercised end to end**: no SDK build shipping a `1.0.0` executor was available on the acceptance host, so the field-by-field match against MXC's published `1.0.0` schema rests on the schema and the docs. Everything above ran under `0.9.0-alpha`.
-- **The harness's own tool layer was not driven**: the acceptance script calls the provider directly, exactly as `dsh-bash-sandbox`/`dsh-pwsh-sandbox` would, but no profile with those rows mounted was launched. Escalation prompts, the denial rendering, and `plugin_manager install_bundle` are therefore untested here.
+- **The escalation and approval path is still untested**: the harness's tool layer was driven (`npm run acceptance:harness`), but only with permits it already had. A command that needs an approval prompt, the escalation retry into `danger-full-access`, and the rendering of a denial in the Web UI have not been exercised.
+- **The Electron desktop profile is not tested**: the dsh CLI refuses to manage it ("profile desktop is managed exclusively by the Electron application"), so this was installed into a CLI-managed profile only.
 - **Other backends and diagnostics**: `wslc`, `windows_sandbox`, `isolation_session` (its service exists on this host but the probe reports it unavailable), `--audit` mode, and the denial-report artifact are untouched by this plugin's tested paths.
 - **Localized denial wording is verified for exactly one locale** (zh-CN, which this host is). Other locales rely on the same derivation, which is locale-independent by construction, but only zh-CN has been observed.
 
@@ -224,6 +250,7 @@ The runner suites spawn child processes; on a host (or inside a sandbox) that fo
 - **Enforcement is always reported partial.** NTFS hard links alias one file object across paths, so a granted workspace file still has an address outside the granted root; a tree whose DACL names another sandbox's AppContainer package SID cannot be opened by the confined child; the selected tier is host-dependent (MXC's base-container tier on newer releases keeps the caller's ambient reads instead of confining them); and denial capture in allow mode would record while permitting. A consumer that needs an absolute boundary must reject this backend rather than treat it as full.
 - **Reads are granted explicitly, because a tier may need it.** MXC's AppContainer tiers start with no ambient read access, so the workspace and every `readOnlyRoots` entry are granted for reading; on the base-container tier reads are ambient and the grant is redundant but harmless. The grant is why `readOnlyRoots` should name directories rather than whole drives.
 - **The workspace needs host-side ACL application** on the AppContainer tiers, which MXC performs per command and then revokes (`clearPolicyOnExit: true`); `allowDaclMutation: false` refuses that fallback, at the cost of the tiers that need it.
+- **The desktop stays reachable by default.** `ui: allow` is the default because Windows programs (PowerShell and Node among them) cannot initialize without Win32k; clipboard access is still `none` and input injection is still denied. `ui: deny` gives MXC's harder posture, at the cost of every program that touches the UI subsystem.
 - **No interactive terminal.** MXC's one-shot executor owns the process's stdio; this plugin forwards the caller's stdio but does not implement a PTY. The harness's PTY-backed terminal tools do not go through `ctx.sandbox` and are unaffected.
 - **The MXC request carries the child's environment** — that is how TMP/TEMP reach the granted private directory — so it holds whatever credentials the profile provides. The runner writes it to the system temp root for the duration of one command and deletes it, and `--print-config` prints the same content (with a stderr note) for diagnosis. Treat both as sensitive, and treat a temp root shared with other local users as shared with them.
 - **The subprocess control channel is refused**, not forwarded (see above). Keep `@deepseek-ai/dsh-sandbox-local` if a profile depends on sandboxed PTC execution.

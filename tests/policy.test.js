@@ -65,6 +65,15 @@ test('operator roots are added to the read-only grants and deduplicated', () => 
   assert.deepEqual(built.filesystem.deniedPaths, [join('C:', 'secret')])
 })
 
+test('the user-interface policy is stated explicitly in both directions', () => {
+  // MXC's own default is `disable: true`, so the plugin's "leave the desktop
+  // reachable" default has to be written out to mean anything.
+  assert.deepEqual(request().ui, { disable: false, clipboard: 'none', injection: false })
+  assert.deepEqual(request({ config: { ui: 'deny' } }).ui, { disable: true, clipboard: 'none', injection: false })
+  assert.deepEqual(request({ config: { ui: 'deny', clipboard: 'all', allowInputInjection: true } }).ui,
+    { disable: true, clipboard: 'all', injection: true })
+})
+
 test('the default network posture is unrestricted, and deny is available', () => {
   assert.deepEqual(request().network, {
     egress: { default: 'allow' },

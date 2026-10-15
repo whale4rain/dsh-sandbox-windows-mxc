@@ -18,6 +18,17 @@ export const NETWORK_POSTURES = Object.freeze(['allow', 'deny'])
 /** The accepted `environment` modes. */
 export const ENVIRONMENT_MODES = Object.freeze(['child', 'child+profile'])
 
+/**
+ * The accepted user-interface postures. `allow` (the default) leaves the
+ * desktop reachable, which Windows programs need to initialize at all: MXC
+ * denies Win32k access by default and PowerShell then dies with
+ * STATUS_DLL_INIT_FAILED (0xC0000142) before it can run anything.
+ */
+export const UI_POSTURES = Object.freeze(['allow', 'deny'])
+
+/** The accepted clipboard levels (MXC's own vocabulary). */
+export const CLIPBOARD_LEVELS = Object.freeze(['none', 'read', 'write', 'all'])
+
 /** Every accepted configuration key (typos are rejected, not ignored). */
 export const CONFIG_KEYS = Object.freeze([
   'execPath',
@@ -28,6 +39,9 @@ export const CONFIG_KEYS = Object.freeze([
   'denialSignatures',
   'network',
   'environment',
+  'ui',
+  'clipboard',
+  'allowInputInjection',
   'allowDaclMutation',
   'clearPolicyOnExit',
   'denialReport',
@@ -118,6 +132,9 @@ export function normalizeConfig(raw) {
     denialSignatures: source.denialSignatures === undefined ? Object.freeze([]) : Object.freeze(signatureArrayField('denialSignatures', source.denialSignatures)),
     network: source.network === undefined ? 'allow' : enumField('network', source.network, NETWORK_POSTURES),
     environment: source.environment === undefined ? 'child' : enumField('environment', source.environment, ENVIRONMENT_MODES),
+    ui: source.ui === undefined ? 'allow' : enumField('ui', source.ui, UI_POSTURES),
+    clipboard: source.clipboard === undefined ? 'none' : enumField('clipboard', source.clipboard, CLIPBOARD_LEVELS),
+    allowInputInjection: source.allowInputInjection === undefined ? false : booleanField('allowInputInjection', source.allowInputInjection),
     allowDaclMutation: source.allowDaclMutation === undefined ? true : booleanField('allowDaclMutation', source.allowDaclMutation),
     clearPolicyOnExit: source.clearPolicyOnExit === undefined ? true : booleanField('clearPolicyOnExit', source.clearPolicyOnExit),
     denialReport,

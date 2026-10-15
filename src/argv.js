@@ -11,7 +11,7 @@
  * @module dsh-sandbox-windows-mxc/argv
  */
 
-import { CONTAINMENTS, ENVIRONMENT_MODES, NETWORK_POSTURES } from './config.js'
+import { CLIPBOARD_LEVELS, CONTAINMENTS, ENVIRONMENT_MODES, NETWORK_POSTURES, UI_POSTURES } from './config.js'
 
 /** The flags that carry a single value. */
 const VALUE_FLAGS = new Map([
@@ -23,6 +23,8 @@ const VALUE_FLAGS = new Map([
   ['--containment', 'containment'],
   ['--network', 'network'],
   ['--environment', 'environment'],
+  ['--ui', 'ui'],
+  ['--clipboard', 'clipboard'],
   ['--container-id', 'containerId'],
   ['--dacl-mutation', 'daclMutation'],
   ['--denial-report', 'denialReport'],
@@ -39,6 +41,7 @@ const REPEAT_FLAGS = new Map([
 const BOOLEAN_FLAGS = new Map([
   ['--preserve-policy', 'preservePolicy'],
   ['--retain-etl', 'retainEtl'],
+  ['--allow-input-injection', 'allowInputInjection'],
   ['--print-config', 'printConfig'],
 ])
 
@@ -50,7 +53,8 @@ export const RUNNER_USAGE = [
   'usage: <node> runner.js --workspace <dir> --mode <read-only|workspace-write> --exec <wxc-exec path>',
   '       [--temp <dir>] [--containment <processcontainer|process>] [--contract-version <ver>]',
   '       [--network <allow|deny>]',
-  '       [--environment <child|child+profile>] [--read-only-root <dir>...] [--denied-path <dir>...]',
+  '       [--environment <child|child+profile>] [--ui <allow|deny>] [--clipboard <none|read|write|all>]',
+  '       [--allow-input-injection] [--read-only-root <dir>...] [--denied-path <dir>...]',
   '       [--container-id <id>] [--dacl-mutation <allow|deny>] [--denial-report <path>] [--retain-etl]',
   '       [--mxc-arg <arg>...] [--print-config] -- <command> [args...]',
 ].join('\n')
@@ -70,6 +74,9 @@ export const RUNNER_USAGE = [
  * @param options.containment - MXC containment selection.
  * @param options.network - network posture.
  * @param options.environment - child environment mode.
+ * @param options.ui - the user-interface posture.
+ * @param options.clipboard - the clipboard level.
+ * @param options.allowInputInjection - whether synthetic input is allowed.
  * @param options.readOnlyRoots - additional read-only grant roots.
  * @param options.deniedPaths - denied paths.
  * @param options.containerId - the derived container id.
@@ -91,6 +98,9 @@ export function buildRunnerArgv(options) {
   argv.push('--containment', options.containment)
   argv.push('--network', options.network)
   argv.push('--environment', options.environment)
+  argv.push('--ui', options.ui)
+  argv.push('--clipboard', options.clipboard)
+  if (options.allowInputInjection === true) argv.push('--allow-input-injection')
   argv.push('--container-id', options.containerId)
   argv.push('--dacl-mutation', options.allowDaclMutation === true ? 'allow' : 'deny')
   if (options.contractVersion !== undefined) argv.push('--contract-version', options.contractVersion)
@@ -127,6 +137,9 @@ export function parseRunnerArgv(raw) {
     containment: 'processcontainer',
     network: 'allow',
     environment: 'child',
+    ui: 'allow',
+    clipboard: 'none',
+    allowInputInjection: false,
     containerId: undefined,
     daclMutation: 'allow',
     denialReport: undefined,
@@ -168,6 +181,8 @@ export function parseRunnerArgv(raw) {
   if (!CONTAINMENTS.includes(facts.containment)) throw new Error(`unknown containment: ${String(facts.containment)}`)
   if (!NETWORK_POSTURES.includes(facts.network)) throw new Error(`unknown network posture: ${String(facts.network)}`)
   if (!ENVIRONMENT_MODES.includes(facts.environment)) throw new Error(`unknown environment mode: ${String(facts.environment)}`)
+  if (!UI_POSTURES.includes(facts.ui)) throw new Error(`unknown ui posture: ${String(facts.ui)}`)
+  if (!CLIPBOARD_LEVELS.includes(facts.clipboard)) throw new Error(`unknown clipboard level: ${String(facts.clipboard)}`)
   if (facts.daclMutation !== 'allow' && facts.daclMutation !== 'deny') throw new Error(`unknown dacl-mutation: ${String(facts.daclMutation)}`)
   if (facts.mode === 'workspace-write' && facts.tempRoot === undefined) throw new Error('workspace-write requires --temp')
   if (facts.mode === 'read-only' && facts.tempRoot !== undefined) throw new Error('read-only does not accept --temp')
@@ -189,6 +204,9 @@ export function configFromFacts(facts) {
     deniedPaths: facts.deniedPaths,
     network: facts.network,
     environment: facts.environment,
+    ui: facts.ui,
+    clipboard: facts.clipboard,
+    allowInputInjection: facts.allowInputInjection,
     allowDaclMutation: facts.daclMutation === 'allow',
     clearPolicyOnExit: !facts.preservePolicy,
     denialReport: facts.denialReport,

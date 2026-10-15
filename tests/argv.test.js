@@ -17,6 +17,9 @@ function options(overrides = {}) {
     containment: 'processcontainer',
     network: 'allow',
     environment: 'child',
+    ui: 'allow',
+    clipboard: 'none',
+    allowInputInjection: false,
     readOnlyRoots: [join('C:', 'Program Files', 'nodejs')],
     deniedPaths: [join('C:', 'secret')],
     containerId: 'dsh-test',
@@ -51,6 +54,9 @@ test('build and parse agree over a fully-specified argv', () => {
     containment: 'processcontainer',
     network: 'deny',
     environment: 'child+profile',
+    ui: 'allow',
+    clipboard: 'none',
+    allowInputInjection: false,
     containerId: 'dsh-test',
     daclMutation: 'deny',
     denialReport: join('C:', 'denials.json'),
@@ -83,6 +89,9 @@ test('defaults apply when only the required facts are given', () => {
   assert.equal(facts.containment, 'processcontainer')
   assert.equal(facts.network, 'allow')
   assert.equal(facts.environment, 'child')
+  assert.equal(facts.ui, 'allow')
+  assert.equal(facts.clipboard, 'none')
+  assert.equal(facts.allowInputInjection, false)
   assert.equal(facts.daclMutation, 'allow')
   assert.equal(facts.preservePolicy, false)
   assert.equal(facts.retainEtl, false)
@@ -115,6 +124,8 @@ test('malformed arguments are refused by name', () => {
     [['--workspace', 'ws', '--mode', 'read-only', '--exec', 'x', '--containment', 'microvm', '--', 'cmd'], /unknown containment: microvm/],
     [['--workspace', 'ws', '--mode', 'read-only', '--exec', 'x', '--network', 'maybe', '--', 'cmd'], /unknown network posture: maybe/],
     [['--workspace', 'ws', '--mode', 'read-only', '--exec', 'x', '--environment', 'profile', '--', 'cmd'], /unknown environment mode: profile/],
+    [['--workspace', 'ws', '--mode', 'read-only', '--exec', 'x', '--ui', 'sometimes', '--', 'cmd'], /unknown ui posture: sometimes/],
+    [['--workspace', 'ws', '--mode', 'read-only', '--exec', 'x', '--clipboard', 'everything', '--', 'cmd'], /unknown clipboard level: everything/],
     [['--workspace', 'ws', '--mode', 'read-only', '--exec', 'x', '--dacl-mutation', 'sometimes', '--', 'cmd'], /unknown dacl-mutation: sometimes/],
     [['--workspace', 'ws', '--mode', 'workspace-write', '--exec', 'x', '--', 'cmd'], /workspace-write requires --temp/],
     [['--workspace', 'ws', '--mode', 'read-only', '--exec', 'x', '--temp', 't', '--', 'cmd'], /read-only does not accept --temp/],

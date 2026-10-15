@@ -81,6 +81,9 @@ npm install @microsoft/mxc-sdk
 | `deniedPaths` | [] | MXC 直接拒绝的路径。执行方式取决于后端；被拒绝会通过沙箱事实上报。 |
 | `contractVersion` | '1.0.0' | 每份请求携带的精确 MXC 契约。把它设为执行器支持的版本（`@microsoft/mxc-sdk` 0.8.x 的载荷用 `0.9.0-alpha`）；MXC 会拒绝超出其支持范围的请求，本插件会在命令运行前先验证这一点。 |
 | `network` | 'allow' | 'allow' 让网络与无隔离时完全一致，因为沙箱 seam 的模式只管文件效果。'deny' 选用 MXC 的出向/入向拒绝，这是比 seam 承诺更强的姿态。 |
+| `ui` | 'allow' | 桌面是否保持可达。**`deny` 是 MXC 自己的默认值，而它会直接废掉 harness 在 Windows 上的 shell 工具**：Windows 程序需要 Win32k 才能完成初始化，PowerShell（以及 Node）因此会在执行任何东西之前以 `STATUS_DLL_INIT_FAILED`（0xC0000142）退出——本机实测确认。`allow` 表示桌面与无隔离时一致，与官方 Windows 档位相同；`deny` 选用 MXC 的 UI 拒绝，此后只有完全不碰 UI 子系统的程序能跑。 |
+| `clipboard` | 'none' | 当 `ui: allow` 时受限命令的剪贴板权限：`none`、`read`、`write`、`all`。 |
+| `allowInputInjection` | false | 当 `ui: allow` 时是否允许合成键盘/鼠标输入。 |
 | `environment` | 'child' | 'child' 让受限命令拿到 harness 组装的完整环境（已由 subprocess 服务完成清洗）。'child+profile' 会再把这份环境叠加到调用用户的 Windows 配置文件环境之上，profile 作用域变量（以及 MXC 要求的平台变量）由此可达。 |
 | `allowDaclMutation` | true | MXC 是否可以在兜底隔离步骤中写入宿主文件系统 DACL。设为 false 即拒绝该兜底，于是需要它的档位会失败，而不是改动宿主 ACL。 |
 | `clearPolicyOnExit` | true | true 表示撤销 MXC 为这一条命令应用的 ACL。false 表示保留它们（MXC 的复用缓存），会在宿主上留下长期状态。 |
@@ -106,6 +109,7 @@ seam 的两个受限模式都是文件效果策略，各自变成一份 MXC `1.0
 | `process.env` | harness 的环境，扣除它自己的启动标记 | 同上，且 TMP/TEMP 指向私有临时目录 |
 | `process.cwd` | 调用方的工作目录，始终显式给出 | 同上 |
 | `network` | config.network（显式姿态；省略意味着 deny） | 同上 |
+| `ui` | { disable, clipboard, injection }，显式写出——因为 MXC 自己的默认值是 `disable: true` | 同上 |
 | `lifecycle` | { destroyOnExit: true, preservePolicy: !clearPolicyOnExit } | 同上 |
 | `fallback` | { allowDaclMutation } | 同上 |
 | `containerId` | dsh-&lt;sha256(工作区, 会话)[0..24]&gt; | 同上 |
@@ -183,12 +187,13 @@ npm test
 | tests/provider.test.js | 把 provider 挂在真实的 @deepseek-ai/dsh-sandbox seam 上：包装 argv、按配置生成 argv、按会话区分的容器 ID、每条故障关闭路径 |
 | tests/runner.test.js | 用 stub 执行器端到端验证 runner：请求内容、环境、私有临时目录生命周期、输出转发、退出码镜像、信封分类、临时根防护、控制标记拒绝、`--print-config` |
 | tests/manifest.test.js | bundle patch、exports 与 files 列表、两个语言的展示元数据、图标 |
+| tests/live/harness.mjs | 启动真实 dsh profile：`ctx.sandbox` 是本 provider、`ctx.shell` 通过它受限执行命令、工作区写入被允许、工作区外写入被拒绝且被 harness 判为拒绝 |
 
 ### 真机验收
 
 ```bash
-npm run acceptance              # 需要一个执行器；用 DSH_MXC_EXEC 指定
-DSH_MXC_CONTRACT=0.9.0-alpha npm run acceptance   # 钉住较旧 SDK 的契约
+npm run acceptance              # 对真实执行器的 provider 验收；用 DSH_MXC_EXEC 指定执行器
+npm run acceptance:harness      # 启动一个真实 dsh profile，走它自己的 shell 工具
 ```
 
 `tests/live/acceptance.mjs` 把 provider 挂在真实 seam 上，受限一个 argv，然后原样启动 `confine()` 返回的内容，并断言五项事实。**在 Windows 11 25H2（build 26200.9457）上、使用 `@microsoft/mxc-sdk` 0.8.0 载荷并钉到其 `0.9.0-alpha` 契约，实测结果：**
@@ -204,10 +209,31 @@ DSH_MXC_CONTRACT=0.9.0-alpha npm run acceptance   # 钉住较旧 SDK 的契约
 
 该宿主上 `wxc-exec.exe --probe` 报告 `tier: "base-container"`、`baseContainerApiPresent: true`、`needsDaclAugmentation: false`、`isolationSessionAvailable: false`——即 MXC 最新的档位，不需要改动宿主 DACL。
 
+### 装进真实 dsh，并走 harness 自己的 shell 工具
+
+```bash
+npm run acceptance:harness          # 用 DSH_HARNESS_PROFILE 选择 profile（默认 web）
+```
+
+`tests/live/harness.mjs` 按 CLI 的方式加载真实 profile（先各 bundle 层，再 profile 自己的 patch 文件）、启动整棵树，并对**运行中的服务**断言，而不是对本插件自己的输出断言。**实测环境：`D:\task\deepseek-harness` 的 dsh 0.1.5-rc.2、web profile，插件以实时链接方式安装：**
+
+| 用例 | 观察结果 |
+|---|---|
+| `ctx.sandbox` | **`MxcSandboxProvider`**——本插件就是被挂载的 provider，官方 ACL 档位已被 bundle patch 停用 |
+| `ctx.shell`（真实的 `dsh-pwsh-sandbox`） | 受限执行前台命令，退出码 0，输出转发：`echo harness-mxc-ok` |
+| 结果中的沙箱事实 | `{ mode: 'workspace-write', denied: false, enforcement: 'partial' }` |
+| 在工作区内 `Set-Content` | 允许，文件内容符合预期 |
+| 在工作区外 `Set-Content` | 被拒绝（退出码 1，未创建文件），stderr 为 `Access to the path '…' is denied.` |
+| harness 自己的分类 | `denied: true`，且**没有**被报成 runner failure |
+| 同样的写入，无隔离执行（对照） | 成功——拒绝来自策略，而不是宿主权限 |
+
+**唯一改变了默认值的事实：** 在 MXC 自己的 `ui.disable: true` 下，PowerShell——也就是 harness 在 Windows 上的 shell 工具——会在执行任何东西之前以 `STATUS_DLL_INIT_FAILED`（0xC0000142）退出，因为它需要 Win32k 完成初始化；Node 同样如此。正反两面都验证过：同一条 `pwsh` 命令在 MXC 下，无 UI 权限时退出 `-1073741502`，有 UI 权限时退出 `0`。因此本插件的默认值是 `ui: allow`（桌面与无隔离时一致，和官方 Windows 档位相同），而不是 MXC 的 `deny`。想要更严姿态的运维可以设 `ui: deny`，代价是此后只有不碰 UI 的程序能跑。
+
 ### 尚未验证的部分
 
 - **`1.0.0` 契约尚未端到端跑过**：验收机上没有随包发布 `1.0.0` 执行器的 SDK 版本，因此对其发布 schema 的逐字段匹配仍以 schema 与文档为依据。以上全部实测跑在 `0.9.0-alpha` 下。
-- **harness 自身的工具层未被驱动**：验收脚本按 `dsh-bash-sandbox`/`dsh-pwsh-sandbox` 的方式直接调用 provider，但没有启动挂载了这些行的 profile。因此升级确认提示、拒绝渲染、以及 `plugin_manager install_bundle` 在本机均未测试。
+- **升级与审批路径仍未测试**：harness 工具层已经驱动过（`npm run acceptance:harness`），但只用了当时已有的许可。需要审批提示的命令、升级重试到 `danger-full-access`、以及 Web UI 中的拒绝渲染都还没有跑过。
+- **Electron 的 desktop profile 未测试**：dsh CLI 拒绝管理它（“profile desktop is managed exclusively by the Electron application”），所以本插件只装进了 CLI 管理的 profile。
 - **其他后端与诊断**：`wslc`、`windows_sandbox`、`isolation_session`（本机存在该服务，但 probe 报告其不可用）、`--audit` 模式、拒绝记录产物，都不在本插件已测路径内。
 - **本地化拒绝措辞只验证了一种语言**（zh-CN，本机即为此）。其他语言依赖同一套推导，按构造与语言无关，但只观察过 zh-CN。
 
@@ -221,6 +247,7 @@ runner 套件会启动子进程；在禁止 fork 的宿主（或沙箱）里，�
 - **enforcement 始终上报 partial。** NTFS 硬链接会让同一个文件对象在多个路径上出现，因此被授权的工作区文件仍有一个授权根之外的地址；DACL 上写有其他沙箱 AppContainer 包 SID 的目录树无法被受限子进程打开；所选档位取决于宿主（较新版本上 MXC 的 base-container 档位保留了调用方环境中的读权限，而不是限制它）；以 allow 模式采集拒绝则意味着记录的同时放行。需要绝对边界的消费者必须拒绝此后端，而不是把它当作 full。
 - **读权限是显式授予的，因为某些档位确实需要。** MXC 的 AppContainer 档位起始时没有任何环境自带读权限，因此工作区以及每个 `readOnlyRoots` 条目都会被授予读取；而在 base-container 档位下读权限本来就是环境自带的，该授权是冗余但无害的。也正因如此，`readOnlyRoots` 应该写目录而不是整个盘符。
 - **工作区需要宿主侧 ACL 应用**（AppContainer 档位下），MXC 会逐条命令应用并在之后撤销（`clearPolicyOnExit: true`）；`allowDaclMutation: false` 会拒绝这条兜底路径，代价是需要它的档位不可用。
+- **默认保持桌面可达。** 默认 `ui: allow`，因为 Windows 程序（包括 PowerShell 与 Node）没有 Win32k 就无法初始化；剪贴板仍为 `none`，输入注入仍被拒绝。`ui: deny` 给出 MXC 更严的姿态，代价是所有触碰 UI 子系统的程序都跑不起来。
 - **没有交互式终端。** MXC 的 one-shot 执行器拥有进程的 stdio；本插件转发调用方的 stdio，但不实现 PTY。harness 基于 PTY 的终端工具不经过 `ctx.sandbox`，不受影响。
 - **MXC 请求会带上子进程的完整环境**——TMP/TEMP 就是这样指向被授权的私有目录的——因此其中包含 profile 提供的全部凭据。runner 会把它写入系统临时根，仅存活于一条命令的时间，随后删除；`--print-config` 会打印同样的内容（并在 stderr 给出提示）。两者都应按敏感数据处理；与其他本地用户共享的临时根，等同于与他们共享这些内容。
 - **subprocess 控制通道被拒绝**，而不是转发（见上文）。如果某个 profile 依赖受隔离的 PTC 执行，请继续使用 `@deepseek-ai/dsh-sandbox-local`。

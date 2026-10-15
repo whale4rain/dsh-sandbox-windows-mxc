@@ -18,6 +18,9 @@ test('defaults are the shipped selection policy', () => {
     denialSignatures: [],
     network: 'allow',
     environment: 'child',
+    ui: 'allow',
+    clipboard: 'none',
+    allowInputInjection: false,
     allowDaclMutation: true,
     clearPolicyOnExit: true,
     denialReport: undefined,
@@ -50,6 +53,20 @@ test('a full row is accepted and frozen', () => {
   assert.equal(config.clearPolicyOnExit, false)
   assert.deepEqual(config.mxcArgs, ['--debug'])
   assert.ok(Object.isFrozen(config.readOnlyRoots))
+})
+
+test('the user-interface posture defaults to the one Windows programs can start under', () => {
+  // MXC denies Win32k access by default, and PowerShell then dies with
+  // STATUS_DLL_INIT_FAILED before running anything: 'allow' is the only default
+  // that leaves the harness's Windows shell executor usable.
+  const defaults = normalizeConfig({})
+  assert.equal(defaults.ui, 'allow')
+  assert.equal(defaults.clipboard, 'none')
+  assert.equal(defaults.allowInputInjection, false)
+  assert.equal(normalizeConfig({ ui: 'deny', clipboard: 'read', allowInputInjection: true }).ui, 'deny')
+  refuses({ ui: 'maybe' }, /ui must be one of "allow", "deny"/)
+  refuses({ clipboard: 'everything' }, /clipboard must be one of "none", "read", "write", "all"/)
+  refuses({ allowInputInjection: 'yes' }, /allowInputInjection must be a boolean/)
 })
 
 test('extra denial signatures are single-line strings', () => {

@@ -89,6 +89,23 @@ check('the denied write is recognisable as a denial', matched.length > 0,
 rmSync(INSIDE_TARGET, { force: true })
 rmSync(DENIED_TARGET, { force: true })
 
+// A contract no MXC build supports must be refused BEFORE anything runs: this is
+// the fail-closed path an operator meets after upgrading or downgrading the SDK.
+try {
+  await (async () => {
+    const provider = new MxcSandboxProvider(new Context(), {
+      ...process.env.DSH_MXC_EXEC === undefined ? {} : { execPath: process.env.DSH_MXC_EXEC },
+      contractVersion: '0.0.1',
+    })
+    const confined = await provider.confine(['cmd', '/c', 'echo nope'], { mode: 'read-only', workspaceRoot: WORKSPACE })
+    check('an unsupported contract is refused before running', false, 'it returned argv ' + JSON.stringify(confined.argv.slice(0, 3)))
+  })()
+} catch (error) {
+  check('an unsupported contract is refused before running',
+    error?.code === 'SANDBOX_UNAVAILABLE' && typeof error.message === 'string' && error.message.includes('refuses this request'),
+    error?.code + ' — ' + String(error?.message ?? error).split('Runner failure: ')[1]?.slice(0, 140))
+}
+
 if (failures.length > 0) {
   process.stderr.write('\n' + failures.length + ' acceptance case(s) failed\n')
   process.exitCode = 1

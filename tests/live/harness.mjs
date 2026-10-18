@@ -135,6 +135,14 @@ try {
   check('the result reports this backend enforcement', okRun.sandbox?.enforcement === 'partial', JSON.stringify(okRun.sandbox))
   check('a permitted command is not a denial', okRun.sandbox?.denied === false, JSON.stringify(okRun.sandbox))
 
+  // A Node process inside the sandbox: module resolution lstats every parent
+  // directory, which needs the workspace volume granted for reading. This is the
+  // case that fails with EPERM when a workspace lives off the system drive.
+  const nodeRun = await ctx.shell.run(ctx.shell.resolve({ command: 'node -e "console.log(1+1)"' }))
+  check('a Node process runs inside the sandbox', nodeRun.exitCode === 0 && nodeRun.stdout.text.includes('2'),
+    'exit=' + nodeRun.exitCode + ' stdout=' + JSON.stringify(nodeRun.stdout.text.trim().slice(0, 40))
+      + ' stderr=' + JSON.stringify(nodeRun.stderr.text.trim().slice(0, 120)))
+
   // A write inside the workspace is permitted.
   // PowerShell syntax on purpose: the harness's Windows shell tool IS pwsh, and
   // `echo x> file` is not a redirection there (`>` must be its own token).

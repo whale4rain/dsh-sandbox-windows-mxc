@@ -17,12 +17,25 @@
 
 import { spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, rmSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, parse, resolve } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import MxcSandboxProvider from '../../index.js'
 
 const WORKSPACE = process.cwd()
 const CONTRACT = process.env.DSH_MXC_CONTRACT
+/**
+ * The workspace's volume root, granted read-only.
+ *
+ * Not cosmetic: Node's module resolution lstats every parent directory of its
+ * entry script, and inside the container an ungranted \`D:\` fails that with
+ * EPERM ("operation not permitted, lstat 'D:\'"), so every Node process in the
+ * sandbox dies before running a line. The platform's own remedy is
+ * `wxc-host-prep prepare-system-drive --target D:\` (one elevated, non-inheriting
+ * read-attributes ACE); this grant is the no-elevation equivalent and is what a
+ * profile whose workspace lives off the system drive needs either way.
+ */
+const VOLUME_ROOT = parse(resolve(WORKSPACE)).root
+const FIXTURE = join(WORKSPACE, 'tests', 'live', 'fixtures', 'piped-stdio.cjs')
 /** A path outside the workspace and the temp area: the write must be denied. */
 const DENIED_TARGET = join(WORKSPACE, '..', 'dsh-mxc-acceptance-denied.txt')
 const INSIDE_TARGET = join(WORKSPACE, 'dsh-mxc-acceptance-inside.txt')
@@ -40,6 +53,7 @@ async function run(mode, argv) {
   const provider = new MxcSandboxProvider(new Context(), {
     ...process.env.DSH_MXC_EXEC === undefined ? {} : { execPath: process.env.DSH_MXC_EXEC },
     ...CONTRACT === undefined ? {} : { contractVersion: CONTRACT },
+    readOnlyRoots: [VOLUME_ROOT],
   })
   const confined = await provider.confine(argv, { mode, workspaceRoot: WORKSPACE })
   const result = spawnSync(confined.argv[0], confined.argv.slice(1), { encoding: 'utf8', cwd: WORKSPACE })
@@ -88,6 +102,19 @@ check('the denied write is recognisable as a denial', matched.length > 0,
 
 rmSync(INSIDE_TARGET, { force: true })
 rmSync(DENIED_TARGET, { force: true })
+
+// The harness's ACL backend documents piped stdio for confined grandchildren as
+// impossible (libuv's named pipes deny the client-end open). Assert the same
+// pattern here: a Node grandchild with piped stdio, and a named pipe this
+// confined process creates and opens itself.
+const piped = await run('workspace-write', ['node', FIXTURE])
+const pipedLines = (piped.result.stdout ?? '').split(/\r?\n/u).filter(line => line.startsWith('{'))
+const pipedCases = pipedLines.map(line => JSON.parse(line))
+const failedPipes = pipedCases.filter(entry => entry.ok !== true)
+check('a Node grandchild with piped stdio works inside the sandbox',
+  piped.result.status === 0 && pipedCases.length === 4 && failedPipes.length === 0,
+  'exit=' + piped.result.status + ' cases=' + pipedCases.map(entry => entry.label + ':' + entry.ok).join(' ')
+    + (piped.result.status === 0 ? '' : ' stderr=' + JSON.stringify((piped.result.stderr ?? '').trim().slice(0, 160))))
 
 // A contract no MXC build supports must be refused BEFORE anything runs: this is
 // the fail-closed path an operator meets after upgrading or downgrading the SDK.

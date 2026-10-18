@@ -149,6 +149,7 @@ MXC-side refusals reach the consumer through two routes, because MXC expresses t
 | --workspace is not an existing directory | the session's working directory was removed (or is a dangling junction) before the command ran |
 | MXC refuses an explicit environment without … | set `environment: child+profile` so MXC can supply the platform-required variables |
 | a confined command cannot read its own toolchain | add that directory to `readOnlyRoots` |
+| `EPERM: operation not permitted, lstat 'D:\'` from any Node process in the sandbox | the workspace lives on a non-system volume whose root is not readable inside the container, and Node's module resolution lstats every parent directory. Grant it (`readOnlyRoots: ['D:\\']`) or run `wxc-host-prep prepare-system-drive --target D:\` once (elevated; adds one non-inheriting read-attributes ACE). |
 
 -----
 
@@ -204,6 +205,7 @@ npm run acceptance:harness      # boot a real dsh profile and drive its own shel
 | Case | Observation |
 |---|---|
 | read-only `cmd /c echo …` | ran, exit 0, output relayed byte for byte; `enforcement: 'partial'` as reported |
+| a Node grandchild with piped stdio, plus a named pipe it creates and opens itself | all four patterns succeed (`inherit`, `node-pipe`, `cmd-pipe`, `named-pipe`) — the EPERM class the ACL backend documents as impossible does not reproduce on this tier |
 | workspace-write, write inside the workspace | allowed, exit 0, file created with the expected content |
 | workspace-write, write outside the workspace | denied, exit 1, **no file created** |
 | the same write, unconfined (control) | succeeded — so the denial above is the sandbox's policy, not a host permission |
@@ -225,6 +227,7 @@ npm run acceptance:harness          # DSH_HARNESS_PROFILE selects the profile (d
 | `ctx.sandbox` | **`MxcSandboxProvider`** — this plugin is the mounted provider, and the shipped ACL row is disabled by the bundle patch |
 | `ctx.shell` (the real `dsh-pwsh-sandbox`) | runs a foreground command confined, exit 0, output relayed: `echo harness-mxc-ok` |
 | the result's sandbox facts | `{ mode: 'workspace-write', denied: false, enforcement: 'partial' }` |
+| a Node process (`node -e "console.log(1+1)"`) | ran inside the sandbox, exit 0 — module resolution passed, which needs the workspace volume granted |
 | `Set-Content` inside the workspace | permitted, file created with the expected content |
 | `Set-Content` outside the workspace | denied (exit 1, no file), stderr `Access to the path '…' is denied.` |
 | the harness's own classification | `denied: true`, and **not** reported as a runner failure |
@@ -249,6 +252,7 @@ The runner suites spawn child processes; on a host (or inside a sandbox) that fo
 
 - **Enforcement is always reported partial.** NTFS hard links alias one file object across paths, so a granted workspace file still has an address outside the granted root; a tree whose DACL names another sandbox's AppContainer package SID cannot be opened by the confined child; the selected tier is host-dependent (MXC's base-container tier on newer releases keeps the caller's ambient reads instead of confining them); and denial capture in allow mode would record while permitting. A consumer that needs an absolute boundary must reject this backend rather than treat it as full.
 - **Reads are granted explicitly, because a tier may need it.** MXC's AppContainer tiers start with no ambient read access, so the workspace and every `readOnlyRoots` entry are granted for reading; on the base-container tier reads are ambient and the grant is redundant but harmless. The grant is why `readOnlyRoots` should name directories rather than whole drives.
+- **Piped stdio and named pipes work on the base-container tier — and that is a tier fact, not a guarantee.** The harness's ACL backend documents the opposite: libuv's pipe stdio uses named pipes whose client-end open requests write access no restricting SID is granted, so `spawn(…, { stdio: 'pipe' })` inside a confined process fails with `EPERM`. Under MXC on this project's host (`tier: base-container`, which keeps the caller's identity for object access rather than swapping it) that failure does not reproduce: an inherited-stdio spawn, a piped Node grandchild, a piped `cmd`, and a named pipe the confined process creates and opens itself all succeed — pinned by `npm run acceptance`. On an AppContainer/DACL tier the identity IS swapped, so the same class of denial may well return; that path is unverified here.
 - **The workspace needs host-side ACL application** on the AppContainer tiers, which MXC performs per command and then revokes (`clearPolicyOnExit: true`); `allowDaclMutation: false` refuses that fallback, at the cost of the tiers that need it.
 - **The desktop stays reachable by default.** `ui: allow` is the default because Windows programs (PowerShell and Node among them) cannot initialize without Win32k; clipboard access is still `none` and input injection is still denied. `ui: deny` gives MXC's harder posture, at the cost of every program that touches the UI subsystem.
 - **No interactive terminal.** MXC's one-shot executor owns the process's stdio; this plugin forwards the caller's stdio but does not implement a PTY. The harness's PTY-backed terminal tools do not go through `ctx.sandbox` and are unaffected.

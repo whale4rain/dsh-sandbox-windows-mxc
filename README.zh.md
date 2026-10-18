@@ -77,7 +77,7 @@ npm install @microsoft/mxc-sdk
 |---|---|---|
 | `execPath` | 未设置 | 要调用的 MXC 执行器。省略时按当前架构从 `@microsoft/mxc-sdk` 的载荷解析（若缺失则回退到随包发布的另一架构），或使用 `DSH_MXC_EXEC`。配置了一个不存在的路径会在首条受限命令处故障关闭。 |
 | `containment` | 'processcontainer' | MXC 的 containment 选择。'process' 让 MXC 自行解析宿主原生进程后端；'processcontainer' 固定使用 Windows ProcessContainer 后端。 |
-| `readOnlyRoots` | [] | 受限命令可额外读取（绝不可写）的目录。MXC 的 AppContainer 档位没有环境自带读权限，因此工作区之外任何普通命令需要读取的内容——工具链、包缓存、凭据目录——都要写在这里。工作区本身始终可读。 |
+| `readOnlyRoots` | [] | 受限命令可额外读取（绝不可写）的目录。MXC 的 AppContainer 档位没有环境自带读权限，因此工作区之外任何普通命令需要读取的内容——工具链、包缓存、凭据目录——都要写在这里。工作区本身始终可读。**工作区若在非系统盘上，必须把该盘根写进来**（`'D:\\'`）：Node 会 lstat 每一级父目录，盘根没授权会让沙箱内所有 Node 进程直接以 `EPERM` 退出。 |
 | `deniedPaths` | [] | MXC 直接拒绝的路径。执行方式取决于后端；被拒绝会通过沙箱事实上报。 |
 | `contractVersion` | '1.0.0' | 每份请求携带的精确 MXC 契约。把它设为执行器支持的版本（`@microsoft/mxc-sdk` 0.8.x 的载荷用 `0.9.0-alpha`）；MXC 会拒绝超出其支持范围的请求，本插件会在命令运行前先验证这一点。 |
 | `network` | 'allow' | 'allow' 让网络与无隔离时完全一致，因为沙箱 seam 的模式只管文件效果。'deny' 选用 MXC 的出向/入向拒绝，这是比 seam 承诺更强的姿态。 |
@@ -147,6 +147,7 @@ MXC 侧的拒绝通过两条路径到达消费者，因为 MXC 有两种表达�
 | --workspace is not an existing directory | 会话的工作目录在命令运行前已被删除（或是失效的 junction） |
 | MXC refuses an explicit environment without … | 设置 `environment: child+profile`，让 MXC 补上平台必需变量 |
 | 受限命令读不到自己的工具链 | 把该目录加入 `readOnlyRoots` |
+| 沙箱内任何 Node 进程报 `EPERM: operation not permitted, lstat 'D:\'` | 工作区在非系统盘上，而该盘根在容器内不可读，Node 的模块解析会 lstat 每一级父目录。给它授权（`readOnlyRoots: ['D:\\']`），或执行一次 `wxc-host-prep prepare-system-drive --target D:\`（需管理员；只加一条不可继承的读取属性 ACE）。 |
 | the installed MXC executor refuses this request: Config schema version … is newer than supported | SDK 的契约与 `contractVersion` 不一致；把 `contractVersion` 钉到受支持的版本，或升级 `wxc-exec` |
 
 -----
@@ -201,6 +202,7 @@ npm run acceptance:harness      # 启动一个真实 dsh profile，走它自己�
 | 用例 | 观察结果 |
 |---|---|
 | read-only 执行 `cmd /c echo …` | 正常运行，退出码 0，输出逐字节转发；上报 `enforcement: 'partial'` |
+| 带管道的 Node 孙进程，以及它自己创建并连接的命名管道 | 四种模式全部成功（`inherit`、`node-pipe`、`cmd-pipe`、`named-pipe`）——官方 ACL 后端记录为"不可能"的那类 EPERM 在此档位未复现 |
 | workspace-write，写工作区内 | 允许，退出码 0，文件内容符合预期 |
 | workspace-write，写工作区之外 | 被拒绝，退出码 1，**没有创建文件** |
 | 同样的写入，无隔离执行（对照） | 成功——因此上面的拒绝来自沙箱策略，而不是宿主的权限 |
@@ -222,6 +224,7 @@ npm run acceptance:harness          # 用 DSH_HARNESS_PROFILE 选择 profile（�
 | `ctx.sandbox` | **`MxcSandboxProvider`**——本插件就是被挂载的 provider，官方 ACL 档位已被 bundle patch 停用 |
 | `ctx.shell`（真实的 `dsh-pwsh-sandbox`） | 受限执行前台命令，退出码 0，输出转发：`echo harness-mxc-ok` |
 | 结果中的沙箱事实 | `{ mode: 'workspace-write', denied: false, enforcement: 'partial' }` |
+| 一个 Node 进程（`node -e "console.log(1+1)"`） | 在沙箱内运行，退出码 0——模块解析通过，这需要工作区所在盘被授权 |
 | 在工作区内 `Set-Content` | 允许，文件内容符合预期 |
 | 在工作区外 `Set-Content` | 被拒绝（退出码 1，未创建文件），stderr 为 `Access to the path '…' is denied.` |
 | harness 自己的分类 | `denied: true`，且**没有**被报成 runner failure |
@@ -246,6 +249,7 @@ runner 套件会启动子进程；在禁止 fork 的宿主（或沙箱）里，�
 
 - **enforcement 始终上报 partial。** NTFS 硬链接会让同一个文件对象在多个路径上出现，因此被授权的工作区文件仍有一个授权根之外的地址；DACL 上写有其他沙箱 AppContainer 包 SID 的目录树无法被受限子进程打开；所选档位取决于宿主（较新版本上 MXC 的 base-container 档位保留了调用方环境中的读权限，而不是限制它）；以 allow 模式采集拒绝则意味着记录的同时放行。需要绝对边界的消费者必须拒绝此后端，而不是把它当作 full。
 - **读权限是显式授予的，因为某些档位确实需要。** MXC 的 AppContainer 档位起始时没有任何环境自带读权限，因此工作区以及每个 `readOnlyRoots` 条目都会被授予读取；而在 base-container 档位下读权限本来就是环境自带的，该授权是冗余但无害的。也正因如此，`readOnlyRoots` 应该写目录而不是整个盘符。
+- **管道 stdio 与命名管道在 base-container 档位下可用——但这是档位事实，不是保证。** 官方 ACL 后端记录的是相反结论：libuv 的管道 stdio 用命名管道，客户端打开时申请的写权限没有任何受限 SID 被授予，于是受限进程内 `spawn(…, { stdio: 'pipe' })` 会以 `EPERM` 失败。在 MXC 下（本机 `tier: base-container`，该档位保留调用方身份做对象访问检查，而不是替换身份）这个失败没有复现：继承 stdio 的 spawn、带管道的 Node 孙进程、带管道的 `cmd`、以及受限进程自己创建并连接的命名管道全部成功——由 `npm run acceptance` 固定。而在 AppContainer/DACL 档位下身份确实被替换，同类拒绝很可能重新出现；该路径本机未验证。
 - **工作区需要宿主侧 ACL 应用**（AppContainer 档位下），MXC 会逐条命令应用并在之后撤销（`clearPolicyOnExit: true`）；`allowDaclMutation: false` 会拒绝这条兜底路径，代价是需要它的档位不可用。
 - **默认保持桌面可达。** 默认 `ui: allow`，因为 Windows 程序（包括 PowerShell 与 Node）没有 Win32k 就无法初始化；剪贴板仍为 `none`，输入注入仍被拒绝。`ui: deny` 给出 MXC 更严的姿态，代价是所有触碰 UI 子系统的程序都跑不起来。
 - **没有交互式终端。** MXC 的 one-shot 执行器拥有进程的 stdio；本插件转发调用方的 stdio，但不实现 PTY。harness 基于 PTY 的终端工具不经过 `ctx.sandbox`，不受影响。

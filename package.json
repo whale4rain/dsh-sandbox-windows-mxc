@@ -29,7 +29,8 @@
     "test": "node tests/run.js",
     "test:runner": "node tests/run.js runner",
     "acceptance": "node tests/live/acceptance.mjs",
-    "acceptance:harness": "node tests/live/harness.mjs"
+    "acceptance:harness": "node tests/live/harness.mjs",
+    "chain": "node tests/live/chain.mjs"
   },
   "peerDependencies": {
     "@deepseek-ai/dsh-sandbox": "*"

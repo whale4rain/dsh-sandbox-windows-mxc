@@ -269,6 +269,7 @@ runner 套件会启动子进程；在禁止 fork 的宿主（或沙箱）里，�
 - **为什么不直接复用官方 ACL 档位？** harness 已经自带 `@deepseek-ai/dsh-sandbox-windows-acl`；本插件存在是因为 MXC 是另一种取舍——由微软维护、策略驱动，代价是原生载荷、24H2+ 的系统下限，以及必须显式授予的读权限。两者是同一个 seam 的替代方案，从不互补。
 - **真相所在：** `src/policy.js` 是模式变成请求的唯一位置，`src/denial.js` 是拒绝方言的唯一推导位置，`src/contract.js` 是判断执行器是否接受的唯一位置；分别由 `tests/policy.test.js`、`tests/denial.test.js`、`tests/contract.test.js` 钉住。runner 除了重新校验拿到的内容之外，不添加任何自己的策略。
 - **新增一个配置字段**意味着四处修改：`src/config.js` 的键列表与校验、`src/policy.js` 的映射、`src/argv.js` 的旗标（构造与解析两侧），以及上面的表格。`tests/argv.test.js` 证明两侧一致。
+- **为什么需要 runner？** seam 交过来的是 argv，MXC 要的是 JSON 请求——这个形状变化无法"以 argv 的形式"表达，所以必须有进程做翻译；而 MXC 的 `wxc-exec <config> -- <command>` 覆盖写法并不能免掉它，只是把命令从文件里挪了出来：仍然需要有东西写出「每次调用都不一样」的请求（mode、工作区、临时根、会话 id）并在之后删除。runner 负责的就是这件事，外加三样换成别的做法就会丢掉的东西：`stderr` 走管道，才能把 MXC 的错误信封转成 seam 的 `127` + 签名（否则"沙箱拒绝"和"命令失败"看起来一模一样）；私有临时目录逐次创建与删除（provider 因此保持无状态）；命令行的引号由这里完成（`src/quote.js`）而不是让 MXC 从 argv 拼，这样引号规则就是文档化的 `CommandLineToArgvW` 那套，并且被测过。`node tests/live/chain.mjs` 会打印一条命令完整的四层链路。
 - **不要把 harness 包 import 进 runner。** 它运行在 profile 的 Node 与 profile 的环境下；它的 import 只有 Node 内置模块和自己的 `src/` 模块。
 
 </details>
